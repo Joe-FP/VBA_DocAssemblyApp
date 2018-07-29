@@ -1,0 +1,179 @@
+VERSION 5.00
+Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} ufShortText 
+   Caption         =   "Enter Short Text variable name (32 characters max)"
+   ClientHeight    =   1395
+   ClientLeft      =   120
+   ClientTop       =   465
+   ClientWidth     =   5685
+   OleObjectBlob   =   "ufShortText.frx":0000
+   StartUpPosition =   1  'CenterOwner
+End
+Attribute VB_Name = "ufShortText"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Option Explicit
+
+'Userform properties.
+Private m_strShortTextName As String        'Short Text (ST) variable name.
+Private m_bCancelClose As Boolean           'True if the form has been cancelled or closed by the user (Cancel or  X).
+
+Private Sub UserForm_Initialize()
+Dim oCCs As Word.ContentControls
+Dim strSTName As String
+  
+  'Set userform dimensions
+  With Me
+    .Height = 99
+    .Width = 296.25
+  End With
+  
+  If Not p_appCC Is Nothing Then
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If p_appCC has been allocated then we are editing an existing variable.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Me.Caption = "Editing Short Text variable (32 characters max)"
+    
+    '''''''''''''''''''''''''
+    'Get the ST variable name.
+    '''''''''''''''''''''''''
+    strSTName = p_appCC.PlaceholderText
+    
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Determine if multiple ST variables with the same name exist, if so,
+    'show hidden label informing the user that all ST variables sharing
+    'the same name will be affected by any change.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Set oCCs = p_appCC.Range.Document.SelectContentControlsByTitle(p_appCC.Title)
+    If oCCs.Count > 1 Then Me.lblMultiple.Visible = True
+    
+  Else
+    '''''''''''''''''''''''
+    'Adding a new variable.
+    '''''''''''''''''''''''
+     Me.Caption = "Enter Short Text variable name (32 characters max)"
+    
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If a range is selected then get the first 32 characters of the selection.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If Selection.Range.start <> Selection.Range.End Then strSTName = Left((Trim(Replace(Selection.Text, Chr(13), ""))), 32)
+    
+  End If
+  
+  ''''''''''''''''''''''''''
+  'Change textbox properties.
+  ''''''''''''''''''''''''''
+  With Me.txtSTName
+  
+    .SetFocus
+    .Value = strSTName
+    
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Don't select variable name in textbox if we are editing
+    '(incase the user accidentally deletes it).
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If p_appCC Is Nothing Then
+      .SelStart = 0
+      .SelLength = Len(.Value)
+    End If
+    
+  End With
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'General controls
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Private Sub cmdOK_Click()
+Dim strValue As String
+  
+  strValue = Trim(txtSTName.Value)
+  
+  ''''''''''''''''''''''''''''''''''''''
+  'Ensure the user has named the variable.
+  ''''''''''''''''''''''''''''''''''''''
+  If Len(strValue) < 1 Then
+    With Me
+      .Caption = "Variable name can't be blank."
+      .txtSTName.SetFocus
+    End With
+    GoTo lbl_Exit
+  End If
+    
+  '''''''''''''''''''''''''''''''''''''
+  'Set the userform public properties.
+  '''''''''''''''''''''''''''''''''''''
+  With Me
+    .ShortTextName = strValue
+    .Hide
+  End With
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Cancel / Close
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Private Sub cmdCancel_Click()
+  
+  With Me
+    .CancelClose = True
+    .Hide
+    '''''''''''''''''''''''''''''''''''''''''''''''
+    'Returns execution to modMarkup.InsertShortText
+    '''''''''''''''''''''''''''''''''''''''''''''''
+  End With
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'The QueryClose event will be triggered by the Unload statement in the calling
+  'procedure modMarkup.InsertShortText. If the user clicks 'X' (CloseMode = 0 vbFormControlMenu)
+  'then the QueryClose event will run completely in order to set the custom UF property
+  '.CancelClose. Execution will then be passed back to the calling procedure which Unloads
+  'the form and hence triggers QueryClose again. In this case, CloseMode = 1, the QueyClose
+  'event will be skipped. This is also the case if the user clicks 'Cancel' - the UF property
+  'is set in the cancel click event and execution is then passed back to the caliing procedure
+  'which unloads the form and hence triggers the QueryClose event.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+  If CloseMode = 0 Then
+    Cancel = True
+    With Me
+      .CancelClose = True
+      .Hide
+    End With
+  End If
+
+lbl_Exit:
+  Exit Sub
+End Sub
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Public properties
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Public Property Get ShortTextName() As String
+  ShortTextName = m_strShortTextName
+End Property
+
+Public Property Let ShortTextName(ByVal strName As String)
+  m_strShortTextName = strName
+End Property
+
+Public Property Get CancelClose() As Boolean
+  CancelClose = m_bCancelClose
+End Property
+
+Public Property Let CancelClose(bCancelClose As Boolean)
+  m_bCancelClose = bCancelClose
+End Property

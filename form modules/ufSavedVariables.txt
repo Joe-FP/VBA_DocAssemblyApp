@@ -1,0 +1,144 @@
+VERSION 5.00
+Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} ufSavedVariables 
+   Caption         =   "Saved Variables"
+   ClientHeight    =   5940
+   ClientLeft      =   120
+   ClientTop       =   465
+   ClientWidth     =   6030
+   OleObjectBlob   =   "ufSavedVariables.frx":0000
+   StartUpPosition =   1  'CenterOwner
+End
+Attribute VB_Name = "ufSavedVariables"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Option Explicit
+Private m_bItemsToDelete As Boolean
+Private m_bSkipChange As Boolean
+Private m_arrItems() As String
+
+Private Sub UserForm_Initialize()
+Dim oCategory As Word.Category
+Dim oBB As Word.BuildingBlock
+Dim i As Long
+  'Set userform dimensions.
+  With Me
+    .Height = 326.25
+    .Width = 313.25
+  End With
+  If p_oTemplate Is Nothing Then GrabTemplate
+  Set oCategory = p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeV).Categories(p_cstrBBCategoryV)
+  With oCategory
+    For i = 1 To .BuildingBlocks.Count
+      Set oBB = .BuildingBlocks(i)
+      Me.lstSavedVariables.AddItem oBB.Name
+    Next i
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub lstSavedVariables_Change()
+Dim i As Long
+  If m_bSkipChange Then Exit Sub
+  With Me.lstSavedVariables
+    For i = 0 To .ListCount - 1
+      If .Selected(i) = True Then
+        Me.cmdDelete.Enabled = True
+        Exit Sub
+      End If
+    Next i
+  End With
+  Me.cmdDelete.Enabled = False
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub chkSelectAll_Click()
+Dim i As Long
+  
+  With Me.chkSelectAll
+    If .Value = True Then
+      .ControlTipText = "De-select all variables in the list."
+    Else
+      .ControlTipText = "Select all variables in the list."
+    End If
+  End With
+  
+  m_bSkipChange = True
+  With Me.lstSavedVariables
+    For i = 0 To .ListCount - 1
+      .Selected(i) = Me.chkSelectAll.Value
+    Next i
+  End With
+  Me.cmdDelete.Enabled = Me.chkSelectAll.Value
+  m_bSkipChange = False
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdDelete_Click()
+Dim arr() As String
+Dim i As Long
+Dim lngIndex As Long
+  
+  lngIndex = 0
+  
+  With Me.lstSavedVariables
+    For i = .ListCount - 1 To 0 Step -1
+      If .Selected(i) = True Then
+        ReDim Preserve arr(lngIndex)
+        arr(lngIndex) = .List(i, 0)
+        lngIndex = lngIndex + 1
+        .RemoveItem i
+        m_bItemsToDelete = True
+      End If
+    Next i
+  End With
+  
+  m_arrItems = arr
+  
+  With Me
+    If .lstSavedVariables.ListCount = 0 Then
+      .chkSelectAll.Enabled = False
+      .cmdDelete.Enabled = False
+    End If
+  End With
+  
+  Me.cmdConfirm.Enabled = True
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdConfirm_Click()
+Dim i As Long
+  If m_bItemsToDelete Then
+    For i = LBound(m_arrItems) To UBound(m_arrItems)
+      If fcnDeleteBuildingBlock(p_clngGalleryTypeV, p_cstrBBCategoryV, m_arrItems(i)) = False Then
+        #If DEBUGMODE = 1 Then
+          Stop
+        #End If
+      End If
+    Next i
+    'Force the dynamic menu to redefine itself and show newly added control.
+    If myRibbon Is Nothing Then Set myRibbon = GetRibbon
+    myRibbon.InvalidateControl "Grp1DMenu1"
+  End If
+  Me.Hide
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdCancel_Click()
+  Me.Hide
+End Sub
+
+
+
+
+
+
+
+

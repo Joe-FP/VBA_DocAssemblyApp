@@ -1,0 +1,1301 @@
+Attribute VB_Name = "modGather"
+Option Explicit
+Option Base 1
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' modGather
+' By J F Pollock, josephfpollock@gmail.com
+'
+' This module contains the procedures required to gather all user variables and associated data from a selected location or from all
+' open documents. Variable data will then be ordered and duplicates removed before being displayed to the user via ufGatheredVariables.
+'
+' This module contains the following procedures:
+'
+'   GatherFromAllOpenDocuments
+'   GatherFromFolder
+'   GatherFromDocument
+'   fcnGatherfrom(ByRef oDoc as Word.Document)
+'   QuickSort(arr As Variant, lngLower As Long, lngUpper As Long)
+'   RemoveDuplicatesFromArray(ByRef arrData As Variant)
+'   fcnGetToken(ByVal str As String, strDelimiter As String, lngTokenNumber As Long) As String
+'   fcnGetFolderPath(Optional strPath As String) As String
+'   fcnGetFilePath(Optional strPath As String) As String
+'   ShowGatheredVariables()
+'   fcnKeyExists(col As Collection, key As String) As Boolean
+'
+' Documentation is in each procedure.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Private Const m_cstrGatheringError As String = "The following documents encountered a problem in the gathering process:"
+ 
+
+Sub GatherFromAllOpenDocuments()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to gather all user variables from all open documents. User variable CC data will be stored
+'in public array p_arrMaster() for processing by the userform code module ufGatheredVariables.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim ufPB As ufProgress            'For the userform which displays the progress.
+Dim oDoc As Word.Document
+Dim lngValidDocs As Long          'Is incremented each time a document containing appCCs is found (used to ReDim the master array).
+Dim lngIndex As Long              'Used for counting the number of document variable descriptions in oDoc.
+Dim bAppCCsFound As Boolean       'Flag if no appCCs were found in any document.
+Dim strDocVariableStart As String 'Used to identify valid document variable descriptions (incase other doc variables are used).
+Dim vGathered As Variant          'Holds a variant (1D string array) containing all delimited CC data
+                                  'gathered from the documents.
+  
+  On Error GoTo err_Handler
+  
+  TurnOffFunctionality
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Create new collection to store user variable descriptions.
+  '
+  'User variable descriptions are optional descriptions which are added by the user.
+  'They describe the purpose of the Content Control in the document and what it relates
+  'to. They are stored as document variables. The name of the document variable is equal to
+  'the Content Control's .Title property and the the value of the doc variable is equal
+  'to the description added by the user (using a userform in another part of the project).
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set p_colVariableDescriptions = New Collection
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'We currently have no valid documents. A valid document
+  'is one which contains user variables (appCCs).
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  lngValidDocs = 0
+
+  Set ufPB = New ufProgress
+  ufPB.Show
+  
+  ''''''''''''''''''''''''''''''''
+  'Loop through all open documents.
+  ''''''''''''''''''''''''''''''''
+  For Each oDoc In Documents
+  
+    '''''''''''''''''''''''''''''''''''''''''''''
+    'Increase the progress bar for each document.
+    '''''''''''''''''''''''''''''''''''''''''''''
+    ufPB.Increase oDoc.Name
+    
+    '''''''''''''''''''''''
+    'Gather all appCC data.
+    '''''''''''''''''''''''
+    vGathered = fcnGatherFrom(oDoc)
+    
+    ''''''''''''''''''''''''''''''''''''''''''''
+    'If no appCCs found then goto next document.
+    ''''''''''''''''''''''''''''''''''''''''''''
+    If IsEmpty(vGathered) Then GoTo NextDocument
+      
+    '''''''''''''''''''''''''''''''''''
+    'Increment the number of valid docs
+    'and ReDim the master array.
+    '''''''''''''''''''''''''''''''''''
+    bAppCCsFound = True
+    lngValidDocs = lngValidDocs + 1
+    ReDim Preserve p_arrMaster(lngValidDocs)
+    
+    ''''''''''''''''''''''''''''''''''''''''''''''''
+    'Add the gathered CC data into the master array.
+    ''''''''''''''''''''''''''''''''''''''''''''''''
+    p_arrMaster(lngValidDocs) = vGathered
+    
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'All DD & LE CC user variables have an optional description. These descriptions
+    'are added as document variables in each document (doc variable Name = oCC.Title, _
+    'doc variable Value = description). Add all existing variable descriptions to public
+    'collection (collection item Key is equal to the doc variable Name [oCC.Title]).
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    With oDoc
+      If .Variables.Count > 0 Then
+        For lngIndex = 1 To .Variables.Count
+          strDocVariableStart = Left(.Variables(lngIndex).Name, 4)
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'Ensure we are collecting document variable descriptions.
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          If strDocVariableStart = "DD: " Or strDocVariableStart = "LE: " Then
+            p_colVariableDescriptions.Add Item:=.Variables(lngIndex).Value, Key:=.Variables(lngIndex).Name
+          End If
+        Next lngIndex
+      End If
+    End With
+  
+NextDocument:
+    
+  Next oDoc
+  
+  TurnOnFunctionality
+  
+  Unload ufPB
+  
+  ''''''''''''''''''''''''''
+  'Handle no variables found.
+  ''''''''''''''''''''''''''
+  If bAppCCsFound = False Then
+    MsgBox "No variables were found in any of the open documents.", vbOKOnly + vbInformation, "No variables found"
+    GoTo lbl_Exit
+  End If
+  
+  ''''''''''''''''''''''''''''''''''''''''''''
+  'Display the gathered variables to the user.
+  ''''''''''''''''''''''''''''''''''''''''''''
+  If fcnShowGatheredVariables = "CancelClose" Then GoTo lbl_Exit
+  
+  MsgBox "Documents complete.", vbOKOnly + vbInformation, "Finished"
+  
+lbl_Exit:
+  TurnOnFunctionality
+  If Not ufPB Is Nothing Then
+    Unload ufPB
+    Set ufPB = Nothing
+  End If
+  'Cleanup public variables.
+  Erase p_arrMaster()
+  Set p_colVariableDescriptions = Nothing
+  Exit Sub
+  
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & " " & Err.Description
+  #End If
+  Resume lbl_Exit
+End Sub
+
+Sub GatherFromFolder()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to gather all user variables from a selected folder. User variable CC data will be stored
+'in public array p_arrMaster() for processing by the userform code module ufGatheredVariables.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim ufPB As ufProgress              'For the userform which displays the progress.
+Dim oDoc As Word.Document
+Dim strFolderPath As String         'The path of the target folder.
+Dim strFileName As String           'The file name of the target document (.doc or .docx).
+Dim strDocVariableID As String      'Used to identify valid document variable descriptions (incase other doc variables exist).
+Dim strFileList As String           'Built up string listing any files which can't be processed due to read-only or other error.
+Dim str1 As String                  'Used with Dir to establish if any documents are available to process (.doc).
+Dim str2 As String                  'Used with Dir to establish if any documents are available to process (.docx).
+Dim lngIndex As Long                'Used for counting the number of document variable descriptions in oDoc.
+Dim lngValidDocs As Long            'Is incremented each time a document containing appCCs is found (used to ReDim the master array).
+Dim i As Long
+Dim bInitiallyOpen As Boolean       'True if the target document in the loop was initially open.
+Dim bShowErrorMsg As Boolean        'bShowErrorMsg is set once when bError = True.
+Dim bAppCCsFound As Boolean         'Remains False until appCCs are found in any document. Used to flag if no appCCs found.
+Dim bError As Boolean               'If any read-only files are encountered, or any errors occur when opening the target doc
+                                    'then bError = True. bError is used to build up strListFiles and is reset after each document.
+Dim vOpenDoc As Variant             'For looping through colOpenDocs.
+Dim vGathered As Variant            'Holds a variant (1D string array) containing all delimited CC data gathered from valid documents.
+Dim colOpenDocNames As Collection   'For listing all the initially open documents.
+
+  On Error GoTo err_Handler
+
+  TurnOffFunctionality
+
+TryAgain:
+
+  strFolderPath = fcnGetFolderPath
+
+  '''''''''''''''''''''''''''''''''''''''''
+  'Handle user closing Folder Dialog Picker.
+  '''''''''''''''''''''''''''''''''''''''''
+  If strFolderPath = vbNullString Then GoTo lbl_Exit
+
+  '''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure appropriate documents are available
+  'to process (.doc & .docx).
+  '''''''''''''''''''''''''''''''''''''''''''''
+  str1 = Dir(strFolderPath & "\" & "*.doc")
+  str2 = Dir(strFolderPath & "\" & "*.docx")
+
+  ''''''''''''''''''''''''''
+  'Handle no documents found.
+  ''''''''''''''''''''''''''
+  If str1 = vbNullString And str2 = vbNullString Then
+    Select Case MsgBox("No appropriate documents were found in the selected folder. " & vbNewLine & vbNewLine & _
+                       "Click 'Retry' to select another folder, or 'Cancel' to quit.", vbRetryCancel + vbInformation, "No documents found")
+      Case vbRetry
+        GoTo TryAgain
+      Case vbCancel
+        GoTo lbl_Exit
+    End Select
+  End If
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Create new collections to store user variable descriptions and
+  'the full file name of all the documents which are initially
+  'open. This allows us to keep them open after processing.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set p_colVariableDescriptions = New Collection
+  Set colOpenDocNames = New Collection
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Add the name of all open documents to a collection, with a key which is identical
+  'to the document name. This allows us to identify specific documents which have to
+  'be left open. colOpenDocs must at least contain the ActiveDocument.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  For Each oDoc In Documents
+    colOpenDocNames.Add oDoc.FullName, oDoc.FullName
+  Next oDoc
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'We currently have no valid documents. A valid document
+  'is one which contains user variables CCs (appCCs).
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  lngValidDocs = 0
+
+  ''''''''''''''''''''''''''''''''''''''''
+  'Get first document (.doc & .docx only).
+  ''''''''''''''''''''''''''''''''''''''''
+  strFileName = Dir(strFolderPath & "\" & "*.doc?")
+
+  Set ufPB = New ufProgress
+  ufPB.Show
+
+  ''''''''''''''''''''''''''''''''
+  'Process all documents in folder.
+  ''''''''''''''''''''''''''''''''
+  While strFileName <> vbNullString
+
+    '''''''''''''''''''''
+    'Skip macro documents.
+    '''''''''''''''''''''
+    If Right(strFileName, 1) = "m" Then GoTo NextDocument
+
+    '''''''''''''''''''''''''''''''''''''''''''''
+    'Increase the progress bar for each document.
+    '''''''''''''''''''''''''''''''''''''''''''''
+    ufPB.Increase strFileName
+
+    '''''''''''''''''''''''''''''''''''
+    'Check if document is initially open.
+    '''''''''''''''''''''''''''''''''''
+    On Error Resume Next
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Trying to set oDoc to a closed document throws error
+    '4160 - Bad file name.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Set oDoc = Documents(strFolderPath & "\" & strFileName)
+
+    Select Case Err.Number
+
+      Case 0
+        ''''''''''''''''''''''''''''''''''''''''
+        'No error. The document is already open.
+        ''''''''''''''''''''''''''''''''''''''''
+        bInitiallyOpen = True
+
+      Case 4160
+        '''''''''''''''''''''''''''''''''''''''''''''
+        'Document is closed - open it.
+        '
+        'Clear error to detect possible error in the
+        'Document.Open event.
+        '''''''''''''''''''''''''''''''''''''''''''''
+        Err.Clear
+
+        Set oDoc = Documents.Open(filename:=strFolderPath & "\" & strFileName, Visible:=False)
+
+        If Err.Number <> 0 Then
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'An error has occured when opening the document. Since the document didn't open,
+          'the oDoc object will remain set to the previous document. When we decide to close
+          'oDoc (due to the error) the previous document will be closed instead.
+          '
+          'By setting oDoc to nothing, the code downstream will know that it didn't open.
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          #If DEBUGMODE = 1 Then
+            Stop
+            Debug.Print Err.Number & " " & Err.Description
+          #End If
+
+          Set oDoc = Nothing
+
+          bError = True
+          '''''''''''''''''''''''''''''''''''''''''''''''
+          'For reference:
+          'Error 5792 - The file appears to be corrupted.
+          'Error 4160 - Bad file name.
+          '''''''''''''''''''''''''''''''''''''''''''''''
+        End If
+
+      Case Else
+        '''''''''''''''''''''''''''''''''''''''''''''''''''
+        'NOTE - Not sure what other error could occur here?
+        '''''''''''''''''''''''''''''''''''''''''''''''''''
+        #If DEBUGMODE = 1 Then
+          Stop
+          Debug.Print Err.Number & " " & Err.Description
+        #End If
+
+        bError = True
+
+    End Select
+
+    '''''''''''''''''''''''''''''''
+    'Restore original error handler.
+    '''''''''''''''''''''''''''''''
+    On Error GoTo err_Handler
+
+    If bError = False Then
+      '''''''''''''''''''''''''''''''''''''''''''''''''
+      'Document is now open. Either it was already open
+      'or we opened it. Test for read-only status.
+      '''''''''''''''''''''''''''''''''''''''''''''''''
+      If oDoc.ReadOnly = True Then
+        ''''''''''''''''''''''''''''''''''
+        'Document is read only - flag that
+        'read-only has been encountered.
+        ''''''''''''''''''''''''''''''''''
+        bError = True
+
+      End If
+
+    End If
+
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If any of the specified errors occured making bError = True, then
+    'the current document in the loop won't be processed, by decision.
+    'So:
+    '
+    ' 1. Set flag to show error msg.
+    ' 2. List the document as unprocessed.
+    ' 3. Reset bError for next document.
+    ' 4. If required: close the current document
+    ' 5. If required: reset bInitiallyOpen for next document.
+    ' 6. Goto next document.
+    '
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If bError = True Then
+
+      bShowErrorMsg = True
+      strFileList = strFileList & vbCr & strFileName
+      bError = False
+
+      '''''''''''''''''''''''''''''''''
+      'Close the current document if
+      'it was initially closed.
+      '''''''''''''''''''''''''''''''''
+      If bInitiallyOpen = False Then
+        '''''''''''''''''''''''''''''''''
+        'oDoc will be explicitly set to
+        'Nothing if it didn't open.
+        '''''''''''''''''''''''''''''''''
+        If Not oDoc Is Nothing Then oDoc.Close savechanges:=False
+
+      Else
+
+        bInitiallyOpen = False
+
+      End If
+
+      GoTo NextDocument
+
+    End If
+
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Apart from already being open or being read-only, I'm not sure what errors might occur when
+    'trying to open the document - apart from possibly being corrupt. All I can do is look out for
+    'additional errors during dev & testing. If an unknown error occurs when opening a document for
+    'the gathering process then record the details of the error + list of documents then give the user
+    'an option to continue or cancel.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+    '''''''''''''''''''''''
+    'Gather all appCC data.
+    '''''''''''''''''''''''
+    vGathered = fcnGatherFrom(oDoc)
+
+    ''''''''''''''''''''''''''''''''''''''''''''''''
+    'If no appCC data is found in oDoc then skip it.
+    ''''''''''''''''''''''''''''''''''''''''''''''''
+    If IsEmpty(vGathered) Then
+
+      If bInitiallyOpen = False Then
+        oDoc.Close savechanges:=False
+      Else
+        bInitiallyOpen = False
+      End If
+
+      GoTo NextDocument
+
+    End If
+
+    ''''''''''''''''''''''''''''''
+    'AppCC data was found in oDoc.
+    ''''''''''''''''''''''''''''''
+    bAppCCsFound = True
+    lngValidDocs = lngValidDocs + 1
+    ReDim Preserve p_arrMaster(lngValidDocs)
+
+    ''''''''''''''''''''''''''''''''''''''''''''''''
+    'Add the gathered CC data into the master array.
+    ''''''''''''''''''''''''''''''''''''''''''''''''
+    p_arrMaster(lngValidDocs) = vGathered
+
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'All DD & LE CC user variables have an optional description. These descriptions
+    'are added as document variables in each document (doc variable Name = oCC.Title, _
+    'doc variable Value = description). Add all existing variable descriptions to public
+    'collection (collection item Key is equal to the doc variable Name oCC.Title).
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    With oDoc
+      If .Variables.Count > 0 Then
+        For lngIndex = 1 To .Variables.Count
+          strDocVariableID = Left(.Variables(lngIndex).Name, 4)
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'Ensure we are collecting document variable descriptions.
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          If strDocVariableID = "DD: " Or strDocVariableID = "LE: " Then
+            p_colVariableDescriptions.Add Item:=.Variables(lngIndex).Value, Key:=.Variables(lngIndex).Name
+          End If
+        Next lngIndex
+      End If
+    End With
+
+NextDocument:
+
+    'Get next document.
+    strFileName = Dir()
+
+  Wend
+
+  Unload ufPB
+
+  ''''''''''''''''''''''''''''''''''''''''''
+  'Handle no variables found in any document.
+  ''''''''''''''''''''''''''''''''''''''''''
+  If bAppCCsFound = False Then
+
+    MsgBox "No variables were found in any of the documents in the selected folder. " & vbCr + vbCr & _
+           "Try another folder.", vbOKOnly + vbInformation, "No variables found"
+
+    GoTo lbl_Exit
+
+  End If
+
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Deal with any read-only documents or errors on opening. Documents with no document
+  'variables will just be skipped. For these particular errors the user is given the
+  'option to cancel the gathering process or continue without the specified document(s).
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If bShowErrorMsg = True Then
+
+    Select Case MsgBox(m_cstrGatheringError & vbCr & strFileList & vbCr + vbCr & _
+                        "They may be set to read-only or possibly corrupt." & vbCr + vbCr & _
+                        "Click 'OK' to continue without these documents or click 'Cancel' " & _
+                        "to end the gathering process.", vbOKCancel + vbInformation, "Gathering message")
+
+      Case vbOK
+        ''''''''''''''''''''''
+        'Do nothing - continue.
+        ''''''''''''''''''''''
+
+      Case vbCancel
+
+        GoTo lbl_Exit
+
+    End Select
+
+  End If
+
+  ''''''''''''''''''''''''''''''''''''''''''''
+  'Display the gathered variables to the user.
+  ''''''''''''''''''''''''''''''''''''''''''''
+  If fcnShowGatheredVariables = "CancelClose" Then GoTo lbl_Exit
+  
+  MsgBox "Documents complete.", vbOKOnly + vbInformation, "Finished"
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'NOTE - at present, variables will be gathered from within protected
+  '       regions (i.e. from inside a locked CC) and from within a
+  '       password protected document.
+  '
+  '       Test what happens when trying to write.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+lbl_Exit:
+
+  If Not ufPB Is Nothing Then
+    Unload ufPB
+    Set ufPB = Nothing
+  End If
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure that all the documents that were specifically
+  'opened for processing are closed.
+  '
+  'colOpenDocs has to be initialised and contain at
+  'least 1 document name (ActiveDocument) before any
+  'other documents are opened. Therefore, if colOpenDocs
+  'is Nothing then the proc has thrown an error before
+  'colOpenDocs was initailised.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  TurnOffFunctionality
+  If Not colOpenDocNames Is Nothing Then
+    For Each oDoc In Documents
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'If the document name doesn't exist in the collection
+      'of initially open document names then close it.
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''
+      If fcnKeyExists(colOpenDocNames, oDoc.FullName) = False Then oDoc.Close savechanges:=True
+      
+      'oDoc.close triggers clsAppEvents.DocumentChange
+      
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'NOTE:
+      ' 1. what about errors when closing the document?
+      ' 2. the above oDoc.Close activates the clsThisApp.DocumentChange event.
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Next oDoc
+  End If
+  TurnOnFunctionality
+  
+  ''''''''''''''''''''''''''
+  'Cleanup public variables.
+  ''''''''''''''''''''''''''
+  Erase p_arrMaster()
+  Set p_colVariableDescriptions = Nothing
+  Exit Sub
+
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & " " & Err.Description
+  #End If
+  Resume lbl_Exit
+End Sub
+
+
+Sub GatherFromDocument()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to gather all user variables from a selected document. User variable CC data will be stored
+'in public array p_arrMaster() for processing by the userform code module ufGatheredVariables.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim ufPB As ufProgress              'For the userform which displays the progress.
+Dim oDoc As Word.Document
+Dim strFileName As String        'The file name of the target document (.doc or .docx).
+Dim strDocVariableID As String   'Used to identify valid document variable descriptions (incase other doc variables are used).
+Dim lngIndex As Long             'Used for counting the number of document variable descriptions in oDoc.
+Dim bInitiallyOpen As Boolean    'True if the target document was already open.
+Dim bError As Boolean            'If document is read-only or there is an error on opening then bError = True.
+Dim vGathered As Variant         'Holds a variant (1D string array) containing all delimited CC data gathered from oDoc.
+
+  On Error GoTo err_Handler
+
+TryAgain:
+
+  ''''''''''''''''''''''''
+  'Get the target document.
+  ''''''''''''''''''''''''
+  strFileName = fcnGetFilePath
+
+  ''''''''''''''''''''''''''''''''''''''
+  'Handle user closing File Dialog Picker.
+  ''''''''''''''''''''''''''''''''''''''
+  If strFileName = vbNullString Then GoTo lbl_Exit
+  
+  ''''''''''''''''''''''''''''''''''''''''
+  'Ensure correct file type (.doc & .docx).
+  ''''''''''''''''''''''''''''''''''''''''
+  Select Case Right(strFileName, (Len(strFileName) - InStrRev(strFileName, ".")))
+    
+    Case "doc", "docx"
+      ''''''''''''''''''''''''''''''
+      'Allowed file type - continue.
+      ''''''''''''''''''''''''''''''
+    Case Else
+      ''''''''''''''''''''''
+      'Disallowed file type.
+      ''''''''''''''''''''''
+      Select Case MsgBox("The document you selected is the wrong file type. " & _
+                         "Selection must be a Word document with .doc or .docx file extension." & vbCr + vbCr & _
+                         "Click 'Retry' to select another document, or 'Cancel' to quit.", vbRetryCancel + vbInformation, "Wrong file type")
+        Case vbRetry
+          GoTo TryAgain
+        
+        Case vbCancel
+          GoTo lbl_Exit
+      End Select
+    
+  End Select
+  
+  Set ufPB = New ufProgress
+  ufPB.Show
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Test if the target document is already open. If it's open then
+  'set flag bInitiallyOpen and keep it open after processing since
+  'it is in use.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  On Error Resume Next
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Trying to set oDoc to a closed document throws error
+  '4160 - Bad file name.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oDoc = Documents(strFileName)
+  
+  '''''''''''''''''''''''''''''''''''''''''''''
+  'Increase the progress bar for each document.
+  '''''''''''''''''''''''''''''''''''''''''''''
+  ufPB.Increase strFileName
+  
+  Select Case Err.Number
+  
+    Case 0
+      ''''''''''''''''''''''''''''''''
+      'No error. The document is open.
+      ''''''''''''''''''''''''''''''''
+      bInitiallyOpen = True
+      
+    Case 4160
+
+      '''''''''''''''''''''''''''''''''''''''''''''
+      'Document is closed - open it.
+      '
+      'Clear error to detect possible error in the
+      'Document.Open event.
+      '''''''''''''''''''''''''''''''''''''''''''''
+      Err.Clear
+      
+      Set oDoc = Documents.Open(strFileName, Visible:=False)
+      
+      If Err.Number <> 0 Then
+      '''''''''''''''''''''''''''''''''''''''''''''''
+      'An error has occured when opening the document.
+      '
+      'For reference:
+      'Error 5792 - The file appears to be corrupted.
+      '''''''''''''''''''''''''''''''''''''''''''''''
+        #If DEBUGMODE = 1 Then
+          Stop
+          Debug.Print Err.Number & " " & Err.Description
+        #End If
+      
+        bError = True
+
+      End If
+
+    Case Else
+    
+      #If DEBUGMODE = 1 Then
+        Stop
+        Debug.Print Err.Number & " " & Err.Description
+      #End If
+      
+      bError = True
+      
+  End Select
+  
+  On Error GoTo err_Handler
+  
+  Unload ufPB
+  
+  If bError = False Then
+    '''''''''''''''''''''''''''''''''''''''''''''''''
+    'Document is now open. Either it was already open
+    'or we opened it. Test for read-only status.
+    '''''''''''''''''''''''''''''''''''''''''''''''''
+    If oDoc.ReadOnly = True Then
+      ''''''''''''''''''''''''''''''''''
+      'Document is read only - flag that
+      'read-only has been encountered.
+      ''''''''''''''''''''''''''''''''''
+      bError = True
+    End If
+  End If
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'We are only gathering from one document. If there is
+  'an error then alert the user and exit.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If bError = True Then
+    
+    MsgBox "The document you selected encountered a problem in the gathering process." & vbCr + vbCr & _
+           "It may be set to read-only, or it could possibly be corrupt.", vbOKOnly + vbInformation, "Gathering message"
+           
+    GoTo lbl_Exit
+    
+  End If
+  
+  '''''''''''''''''''''''
+  'Gather all appCC data.
+  '''''''''''''''''''''''
+  vGathered = fcnGatherFrom(oDoc)
+  
+  ''''''''''''''''''''''''''''''''''''''''''''
+  'If no appCCs are found in the target document
+  'then alert the user and let them try again.
+  ''''''''''''''''''''''''''''''''''''''''''''
+  If IsEmpty(vGathered) Then
+  
+    '''''''''''''''''''''''''''''''''''''''''''
+    'Close document if it was initailly closed.
+    '''''''''''''''''''''''''''''''''''''''''''
+    If Not bInitiallyOpen Then oDoc.Close savechanges:=False
+    
+    ''''''''''''''''''''''''''''''''''''''''
+    'Reset bInitiallyOpen incase of TryAgain.
+    ''''''''''''''''''''''''''''''''''''''''
+    bInitiallyOpen = False
+    
+    Select Case MsgBox("No variables were found in your chosen document. " & vbCr + vbCr & _
+                       "Click 'Retry' to select another document, or click 'Cancel' to quit.", vbRetryCancel + vbInformation, "No variables found")
+      Case vbRetry
+        GoTo TryAgain
+      Case vbCancel
+        GoTo lbl_Exit
+    End Select
+
+  End If
+    
+  ''''''''''''''''''''''''''''''''''''''''''''''''
+  'Variables were found.
+  '
+  'Add the gathered CC data into the master array.
+  ''''''''''''''''''''''''''''''''''''''''''''''''
+  ReDim p_arrMaster(1)
+  p_arrMaster(1) = vGathered
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'All DD & LE CC user variables have an optional description. These descriptions
+  'are added as document variables in each document (doc variable Name = oCC.Title, _
+  'doc variable Value = description). Add all existing variable descriptions to public
+  'collection (collection item Key is equal to the doc variable Name [oCC.Title]).
+  '
+  'Create new collection to store doc variable descriptions.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set p_colVariableDescriptions = New Collection
+  
+  With oDoc
+    If .Variables.Count > 0 Then
+      For lngIndex = 1 To .Variables.Count
+        strDocVariableID = Left(.Variables(lngIndex).Name, 4)
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'Ensure we are collecting document variable descriptions.
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        If strDocVariableID = "DD: " Or strDocVariableID = "LE: " Then
+          p_colVariableDescriptions.Add Item:=.Variables(lngIndex).Value, Key:=.Variables(lngIndex).Name
+        End If
+      Next lngIndex
+    End If
+  End With
+
+  ''''''''''''''''''''''''''''''''''''''''''''
+  'Display the gathered variables to the user.
+  ''''''''''''''''''''''''''''''''''''''''''''
+  If fcnShowGatheredVariables = "CancelClose" Then GoTo lbl_Exit
+  
+  MsgBox "Document complete.", vbOKOnly + vbInformation, "Finished"
+  
+lbl_Exit:
+
+  '''''''''''''''''''''''''''''''''''''''''''
+  'Close document if it was initailly closed.
+  '''''''''''''''''''''''''''''''''''''''''''
+  If Not bInitiallyOpen Then oDoc.Close savechanges:=True
+
+  If Not ufPB Is Nothing Then
+    Unload ufPB
+    Set ufPB = Nothing
+  End If
+
+  ''''''''''''''''''''''''''
+  'Cleanup public variables.
+  ''''''''''''''''''''''''''
+  Erase p_arrMaster()
+  Set p_colVariableDescriptions = Nothing
+  Exit Sub
+
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & " " & Err.Description
+  #End If
+  Resume lbl_Exit
+End Sub
+
+Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to gather all application added CC data from the passed document oDoc.
+'Function returns a variant (1D string array) containing all delimited CC data
+'from oDoc, or an empty variable if no application added CCs exist in oDoc.
+'
+'Parameters:
+'-----------
+' oDoc  The target document from which to gather the application added CC data.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCC As Word.ContentControl
+Dim oCCs As Word.ContentControls
+Dim arrCCData() As String         'Array to hold the delimited appCC data in the order it is gathered from oDoc.
+Dim arrCCDataInOrder() As String  'Array to hold the delimited appCC data in order.
+Dim lngStoryTag As Long           'Represents the storytype of the CC in oDoc.
+Dim i As Long                     'For looping through all appCCs in oDoc and all elements in arrCCData.
+Dim j As Long                     'Counter; starting element in arrCCDataInOrder for all elements with lngStoryTag = 0
+Dim k As Long                     'Counter; starting element in arrCCDataInOrder for all elements with lngStoryTag = 1
+Dim l As Long                     'Counter; starting element in arrCCDataInOrder for all elements with lngStoryTag = 2
+Dim lng0 As Long                  'Running count of controls in all hdr/ftr storytypes.
+Dim lng1 As Long                  'Running count of controls in main storytype.
+Dim lng2 As Long                  'Running count of controls in all other storytypes.
+Dim varReturn As Variant          'Equal to the return value of the function.
+  
+  'Default return value for function is an empty variant variable.
+  On Error GoTo err_Handler
+  
+  Set oCCs = oDoc.SelectContentControlsByTag("ccApp")
+
+  'If no appCCs in document then exit.
+  If oCCs.Count < 1 Then Exit Function
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Dimension both CC data arrays. Add extra element to ordered array.
+  'Element 1 will store the document name which will be used in the
+  'userform code module for naming the pages of the multipage control.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  ReDim arrCCData(oCCs.Count)
+  ReDim arrCCDataInOrder(oCCs.Count + 1)
+  
+  'Set lngCounters.
+  lng0 = 0
+  lng1 = 0
+  lng2 = 0
+  
+  'Loop through all appCCs collecting required CC data.
+  For i = 1 To oCCs.Count
+    Set oCC = oCCs(i)
+    With oCC
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Set a tag which represents the storytype of the control (0 - All hdr/ftr types, 1 - main story, 2 - everything else).
+      'In the userform, all Hdr/Ftr controls are displayed first, then main story controls etc.
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      Select Case .Range.StoryType
+        'Hdr/Ftrs
+        Case 6, 7, 8, 9, 10, 11: lngStoryTag = 0: lng0 = lng0 + 1
+        'Main
+        Case 1: lngStoryTag = 1: lng1 = lng1 + 1
+        'Others
+        Case Else: lngStoryTag = 2: lng2 = lng2 + 1
+      End Select
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Add delimited CC data to string array.
+      'Delimiter - Unit separator Chr(31) - non-printable control character.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      arrCCData(i) = lngStoryTag & Chr(31) & .Range.start & Chr(31) & .PlaceholderText & Chr(31) & .Range.Text & Chr(31) & .Type & Chr(31) & .Title
+    End With
+  Next i
+  
+  #If DEBUGMODE = 1 Then
+    Call TestDebug.PrintArray("modGather.fcnGatherFrom", "arrCCData() gathered from " & oDoc.FullName, arrCCData)
+  #End If
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  'Note: if lng0/lng1/lng2 = 0 then no CCs have
+  'been found in that particular storytype.
+  '
+  'Sort array by token 2 (.Range.Start).
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  QuickSort arrCCData, LBound(arrCCData), UBound(arrCCData)
+  
+  #If DEBUGMODE = 1 Then
+    Call TestDebug.PrintArray("modGather.fcnGatherFrom", "arrCCData() sorted based on token 2.", arrCCData)
+  #End If
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'For our purposes, the array is now only partially sorted. We have sorted
+  'based on .Range.Start, now we need to put the array in order of lngStoryTag
+  'i.e. the array has to contain all hdr/ftr tags first (in the order they appear),
+  'then main story controls in the order they appear etc.
+  '
+  'The below method works, and is my attempt at putting the final array in
+  'order after it has been sorted (partially) by the Quicksort based on token 2.
+  'I am sure there is a cleaner way to do this. Running the QuickSort procedure
+  'twice (once on each token) hasn't worked for me. Presumably because of the
+  'internal way the array is sorted.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+  'lngStoryTag     Bounds in arrCCDataInOrder (account for extra first element)
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  '  0              LB 1                 UB lng0
+  '  1              LB (lng0 + 1)        UB (lng0 + lng1)
+  '  2              LB (lng0 + lng1 + 1) UB (lng0 + lng1 + lng2)
+  
+  'Set starting points for counters (accouting for additional 1st element).
+  j = 1 + 1
+  k = 1 + lng0 + 1
+  l = 1 + lng0 + lng1 + 1
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Loop through partially sorted array arrCCData and copy elements into
+  'arrCCDataInOrder depending on lngStoryTag.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  For i = LBound(arrCCData) To UBound(arrCCData)
+    Select Case Left(arrCCData(i), 1) 'Token 1 - lngStoryTag
+      Case "0": arrCCDataInOrder(j) = arrCCData(i): j = j + 1
+      Case "1": arrCCDataInOrder(k) = arrCCData(i): k = k + 1
+      Case "2": arrCCDataInOrder(l) = arrCCData(i): l = l + 1
+    End Select
+  Next i
+  
+  'Add the document name to the ordered array.
+  arrCCDataInOrder(1) = oDoc.FullName
+  
+  #If DEBUGMODE = 1 Then
+    Call TestDebug.PrintArray("modGather.fcnGatherFrom", "arrCCData() sorted based on token 1 to " & _
+                              "create arrCCDataInOrder().", arrCCDataInOrder)
+  #End If
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Remove duplicates from the ordered array. Keep the elements with the
+  'lowest .Range.Start (token 2) to preserve order of appearance in UF.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  RemoveDuplicatesFromArray arrCCDataInOrder
+  
+  'RemoveDuplicatesFromArray(arrCCDataInOrder) doesn't remove duplicates when
+  '()s are added around parameter arrCCDataInOrder.
+  
+  #If DEBUGMODE = 1 Then
+    Call TestDebug.PrintArray("modGather.fcnGatherFrom", "Duplicates removed from arrCCDataInOrder() " & _
+                              "to create final array", arrCCDataInOrder)
+  #End If
+  
+  'Set the return value.
+  varReturn = arrCCDataInOrder
+  
+  'Success. Return variant (string array).
+  fcnGatherFrom = varReturn
+  
+lbl_Exit:
+  Exit Function
+  
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & " " & Err.Description
+  #End If
+  Resume lbl_Exit
+End Function
+
+Private Sub QuickSort(arr As Variant, lngLower As Long, lngUpper As Long)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Customised quicksort procedure designed to sort a 1D array 'arr' based on
+'a chosen token in each element. Sort arr (arrCCData) based on token 2 (.Range.Start).
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim lngTempLower As Long
+Dim lngTempUpper As Long
+Dim vPivot As Variant
+Dim vTempSwap As Variant
+
+  On Error GoTo err_Handler
+  
+  lngTempLower = lngLower
+  lngTempUpper = lngUpper
+  vPivot = CLng(fcnGetToken(arr((lngLower + lngUpper) \ 2), Chr(31), 2))
+  
+  While (lngTempLower <= lngTempUpper)
+  
+    While CLng(fcnGetToken(arr(lngTempLower), Chr(31), 2)) < vPivot And lngTempLower < lngUpper
+     lngTempLower = lngTempLower + 1
+    Wend
+    
+    While (vPivot < CLng(fcnGetToken(arr(lngTempUpper), Chr(31), 2)) And lngTempUpper > lngLower)
+     lngTempUpper = lngTempUpper - 1
+    Wend
+    
+    If (lngTempLower <= lngTempUpper) Then
+     vTempSwap = arr(lngTempLower)
+     arr(lngTempLower) = arr(lngTempUpper)
+     arr(lngTempUpper) = vTempSwap
+     lngTempLower = lngTempLower + 1
+     lngTempUpper = lngTempUpper - 1
+    End If
+    
+  Wend
+  
+  If (lngLower < lngTempUpper) Then QuickSort arr, lngLower, lngTempUpper
+  If (lngTempLower < lngUpper) Then QuickSort arr, lngTempLower, lngUpper
+  
+lbl_Exit:
+  Exit Sub
+  
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & " " & Err.Description
+  #End If
+  End
+End Sub
+
+Private Sub RemoveDuplicatesFromArray(ByRef arrData As Variant)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to compare all duplicates from the arrCCDataInOrder() array then remove each
+'duplicate based on a comparison of the .Range.Start token. Each element of the arrCCDataInOrder
+'array takes the following form:
+'     1               2               3                4          5       6
+' lngStoryTag | .Range.Start | .PlaceholderText | .Range.Text | .Type | .Title
+'
+'The .Title token (6) represents a variable name in the document. The desired outcome is
+'to keep only 1-no. tokensised string representing each variable. The string that is kept will be
+'the one with lowest .Range.Start value (token 2). This means that duplicates can be removed
+'while still preserving the order that the variable occurs in the document.
+'
+'Parameter:
+'----------
+'
+' arrData   Variant representing the arrCCDataInOrder() array.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim i As Long           'Counters for looping through array.
+Dim j As Long           'Counters for looping through array.
+Dim token2_i As Long    'Token 2 of element i (.Range.Start). Represents variable start position.
+Dim token6_i As String  'Token 6 of element i (.Title). Represents variable name.
+Dim token2_j As Long    'Token 2 of element j (.Range.Start). Represents variable start position.
+Dim token6_j As String  'Token 6 of element j (.Title). Represents variable name.
+Dim lngUpper As Long    'Stores the upper bound of arrData, which will vary as elements are deleted.
+
+  ''''''''''''''''''''''''''''''''''''''''''
+  'Test parameter assumption:
+  'Ensure that arrData is an array.
+  ''''''''''''''''''''''''''''''''''''''''''
+  #If DEBUGMODE = 1 Then
+    Debug.Assert IsArray(arrData)
+  #End If
+  
+  'Begin looping to compare elements.
+  For i = LBound(arrData) + 1 To UBound(arrData)
+  
+    If arrData(i) = vbNullString Then GoTo Next_i
+  
+    'Get token 2 & 6 from element i.
+    token2_i = CLng(fcnGetToken(arrData(i), Chr(31), 2))
+    token6_i = fcnGetToken(arrData(i), Chr(31), 6)
+    
+    For j = i + 1 To UBound(arrData)
+    
+      If arrData(j) = vbNullString Then GoTo Next_j
+      
+      'Get token 6 from element j (PlaceholderText).
+      token6_j = fcnGetToken(arrData(j), Chr(31), 6)
+  
+      'Compare token 6 from element i and j.
+      If token6_i = token6_j Then
+      
+        ''''''''''''''''''''''''''''''''''''''''
+        'Tokens are equal (same variable name).
+        'Get token 2 from element j (.Range.Start).
+        ''''''''''''''''''''''''''''''''''''''''
+        token2_j = CLng(fcnGetToken(arrData(j), Chr(31), 2))
+        
+        '''''''''''''''''''''''''''''''''''''
+        'Compare token 2 from element i and j.
+        'Delete the element with largest token 2.
+        '''''''''''''''''''''''''''''''''''''
+        If token2_j <= token2_i Then
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'The .Range.Start token from element j is less than or equal to
+          'that of element i. We have found a variable with an identical name
+          'but an earlier start position. We want to keep the element representing
+          'the variable with the earlier start position. Mark the appropriate
+          'element with a default value - this will be used to delete the
+          'element after both loops are completed.
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          arrData(i) = vbNullString
+        Else
+          arrData(j) = vbNullString
+        End If
+        
+      End If
+        
+Next_j:
+    Next j
+  
+Next_i:
+  Next i
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'UBound of arrData will vary while deleting duplicates.
+  'Set the initial UBound and start at element 2.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  lngUpper = UBound(arrData)
+  i = 2
+  
+  'Delete all elements marked as vbNullString.
+  Do While i <= lngUpper
+    If arrData(i) = vbNullString Then
+      'Delete the array element.
+      If modArraySupport.DeleteArrayElement(arrData, i, True) = True Then
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'Element was successfully deleted. The UBound of arrData
+        'has now decreased by one. Change lngUpper to reflect this
+        'then re-test the same element as all elements have been
+        'shifted one position to the left:
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        lngUpper = lngUpper - 1
+        GoTo ReTest
+      Else
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'TODO - The element wasn't deleted using CPearsons procedures.
+        '       Think about how I want to handle this type of result
+        '       on an application level - global error handling.
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        #If DEBUGMODE = 1 Then
+          Stop
+        #End If
+      End If
+    End If
+    i = i + 1
+ReTest:
+  Loop
+    
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Function fcnGetToken(ByVal str As String, strDelimiter As String, lngTokenNumber As Long) As String
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to return a token from a delimited string. Function is one-based.
+'E.g. fcnGetToken("14|Hello world!|123", "|", 2) = Hello world!
+'
+'Parameters:
+'-----------
+' str             The tokenized string.
+'
+' strDelimiter    The delimiter used in the tokenized string.
+'
+' lngTokenNumber  The token number required in the tokenized string.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  On Error GoTo err_Handler
+  
+  #If DEBUGMODE = 1 Then
+    If Len(str) = 0 Then
+      'No string argument supplied.
+      Stop
+    ElseIf Len(strDelimiter) = 0 Then
+      'No delimiter argument supplied.
+      Stop
+    ElseIf InStr(str, strDelimiter) = 0 Then
+      'Delimiter argument not found in string argument.
+      Stop
+    ElseIf lngTokenNumber < LBound(Split(str, strDelimiter)) + 1 Then
+      'Token number invalid: less than lower bound.
+      Stop
+    ElseIf lngTokenNumber > UBound(Split(str, strDelimiter)) + 1 Then
+      'Token number invalid: greater than upper bound.
+      Stop
+    End If
+  #End If
+  
+  fcnGetToken = Split(str, strDelimiter)(lngTokenNumber - 1) 'Split() is zero-based
+  
+lbl_Exit:
+  Exit Function
+  
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & " " & Err.Description
+  #End If
+End Function
+
+Private Function fcnGetFolderPath(Optional strPath As String) As String
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to display the File Dialog Folder Picker and return the selected folder path.
+'
+'Parameter:
+'----------
+'strPath    Optional. The path name of a file which will be displayed initailly when the
+'           folder dialog opens.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oFolder As FileDialog
+Dim strItem As String
+  On Error GoTo lbl_Exit
+  Set oFolder = Application.FileDialog(msoFileDialogFolderPicker)
+  With oFolder
+    .Title = "Select a Folder"
+    .AllowMultiSelect = False
+    .InitialFileName = strPath
+    If .Show <> -1 Then GoTo lbl_Exit
+    strItem = .SelectedItems(1)
+  End With
+lbl_Exit:
+  fcnGetFolderPath = strItem
+  Set oFolder = Nothing
+  Exit Function
+End Function
+
+Private Function fcnGetFilePath(Optional strPath As String) As String
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to display the File Dialog File Picker and return the selected file path.
+'
+'Parameter:
+'----------
+'strPath    Optional. The path name of a file which will be displayed initailly when
+'           the folder dialog opens.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oFile As FileDialog
+Dim strItem As String
+  On Error GoTo lbl_Exit
+  Set oFile = Application.FileDialog(msoFileDialogFilePicker)
+  With oFile
+    .Title = "Select a document (.doc or .docx)"
+    .AllowMultiSelect = False
+    .InitialFileName = strPath
+    If .Show <> -1 Then GoTo lbl_Exit
+    strItem = .SelectedItems(1)
+  End With
+lbl_Exit:
+  fcnGetFilePath = strItem
+  Set oFile = Nothing
+  Exit Function
+End Function
+
+Private Function fcnShowGatheredVariables() As String
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Display the userform showing all gathered variables. Dedicated procedure to
+'display all gathered user variables in the userform ufGatheredVariables. This
+'proc is used by all 3 gathering procedures (OpenDocs, Folder and Document) above.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  On Error GoTo lbl_Exit
+  Set p_ufGather = New ufGatheredVariables
+  p_ufGather.Show
+  If p_ufGather.CancelClose = True Then fcnShowGatheredVariables = "CancelClose"
+lbl_Exit:
+  Unload p_ufGather
+  Set p_ufGather = Nothing
+End Function
+
+Private Function fcnKeyExists(col As Collection, Key As String) As Boolean
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to check if an item with a specific key exists in
+'a collection (col). Returns True if it does, False if not.
+'
+'Parameters:
+'-----------
+'   col       The collection we are looking in.
+'   key       The key we are looking for.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  On Error GoTo lbl_Exit
+  col.Item Key
+  'If no error then key exists. Return True.
+  fcnKeyExists = True
+lbl_Exit:
+  Exit Function
+End Function
+
+
+
+
+
+
+
+
+
+
+

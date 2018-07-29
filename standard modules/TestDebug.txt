@@ -1,0 +1,437 @@
+Attribute VB_Name = "TestDebug"
+Option Explicit
+Public Const C_LibraryPath As String = "C:\Users\Joseph\Desktop\EasyDoc (TM)\Statement Library\Statement Library 1.3.docx"
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'** FOR DEBUGGING, TESTING & TROUBLESHOOTING ONLY **
+'
+' TestDebug
+' By J F Pollock, josephfpollock@gmail.com
+'
+' This module contains procedures which support the debugging, testing and troubleshooting process.
+' Procedures cover a variety of uses and some are called directly when DebugMode = 1.
+'
+' This module contains the following procedures:
+'
+'   PrintArray
+'   StressTest
+'   CloseAllDocs
+'   RemoveAllDocVariables
+'   PrintAllDocVariables
+'   CheckReferences
+'   SelectionInfo
+'   LoadLibrary
+'   BBNameLength
+'   CategoryNameLength
+'   ListAllBuildingBlocks
+'   DeleteAllBuildingBlocks
+'
+' Required documentation is in each procedure.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+Sub PrintArray(Procedure As String, Description As String, arr As Variant)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'This procedure is used to print all the elements from the passed array arr to the immediate window.
+'This procedure is used directly while debugging (i.e. when DebugMode = 1). Requires the procedure name
+'from where it is being used and a description of what it is being used to print.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim str As String
+Dim i As Long
+  Debug.Print vbNewLine
+  Debug.Print "Procedure: " & Procedure
+  Debug.Print "Description: " & Description
+  Debug.Print "Array values: " & vbNewLine
+  Debug.Print "             lngStoryTag -- .Range.start -- .PlaceholderText -- .Range.Text -- .Type -- .Title"
+  Debug.Print vbNewLine
+  For i = LBound(arr) To UBound(arr)
+    str = arr(i)
+    Debug.Print "Element " & i & ":   " & Replace(str, Chr(31), " -- ")
+  Next i
+  Debug.Print vbNewLine
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub StressTest()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure used to create a number of dummy documents to test the gathering process.
+'This procedure creates test documents and then copies & pastes CCs from the ActiveDocument.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Word.Document
+Dim oCC As Word.ContentControl
+Dim str As String
+Dim lngDocs As Long
+Dim i As Integer
+  Set oDoc = ActiveDocument
+  oDoc.content.Copy
+  ''''''''''''''''''''''''''''''''''''''''''''
+  'Number of documents to create for the test.
+  ''''''''''''''''''''''''''''''''''''''''''''
+  lngDocs = 10
+  Application.ScreenUpdating = False
+  'Add dummy documents.
+  For i = 1 To lngDocs
+    Set oDoc = Documents.Add
+    oDoc.Range.Paste
+  Next i
+  'Ensure correct format of CCs in dummy documents.
+  For Each oDoc In Documents
+    If oDoc.Name = ThisDocument.Name Or oDoc.Name = ActiveDocument.Name Then GoTo lbl_NextDoc
+    For Each oCC In oDoc.ContentControls
+      With oCC
+        .Tag = "ccApp"
+        .SetPlaceholderText Text:=.Range.Text
+        Select Case oCC.Type
+          Case 1
+            .Title = "ST: " & .PlaceholderText
+          Case 3
+            .Title = "DD: " & .PlaceholderText
+          Case 0
+            .Title = "LE: " & .PlaceholderText
+        End Select
+      End With
+    Next oCC
+lbl_NextDoc:
+  Next oDoc
+  Application.ScreenUpdating = True
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub CloseAllDocs()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'This procedure will close all open documents except the template (ThisDocument).
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Word.Document
+  Application.ScreenUpdating = False
+  For Each oDoc In Documents
+    If oDoc.Name <> ThisDocument.Name Then
+      oDoc.Saved = True
+      oDoc.Close
+    End If
+  Next oDoc
+  Application.ScreenUpdating = True
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub RemoveAllDocVariables()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure used to remove all document variables from ALL currently open documents.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Word.Document
+Dim oCC As Word.ContentControl
+Dim i As Integer
+  For Each oDoc In Documents
+    For i = oDoc.Variables.Count To 1 Step -1
+      oDoc.Variables(i).Delete
+    Next i
+  Next oDoc
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub PrintAllDocVariables()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to print all document variables from ALL open documents.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Word.Document
+Dim i As Integer
+  For Each oDoc In Documents
+    Debug.Print oDoc.FullName & vbCr & vbCr
+    For i = 1 To oDoc.Variables.Count
+      Debug.Print oDoc.Variables(i).Name & "    " & oDoc.Variables(i).Value
+    Next i
+    Debug.Print vbCr & vbCr
+  Next oDoc
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub CheckReferences()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to display the current references in ThisDocument's Project.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim i As Long
+  With ThisDocument.VBProject.References
+    For i = 1 To .Count
+      With .Item(i)
+        Debug.Print "GUID: " & .Guid
+        Debug.Print "Name: " & .Name
+        Debug.Print "Description: " & .Description
+        Debug.Print "FullPath: " & .FullPath
+        Debug.Print "Built in: " & .BuiltIn
+        Debug.Print "Major: " & .Major
+        Debug.Print "Minor: " & .Minor & vbCr
+      End With
+    Next i
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub SelectionInfo()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to print some information about the selection.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Debug.Print "Storytype: " & Selection.StoryType
+  Debug.Print "Type: " & Selection.Type
+  Debug.Print "Len: " & Len(Selection)
+  Debug.Print "Text: " & Selection.Text
+  Debug.Print "Range.Text: " & Selection.Range.Text & vbCr & vbCr
+End Sub
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'The following procedures are here to troubleshoot the Library section of the application and load the Word table
+'(containing all Library statements) as Building Blocks. In order to load the Library, the document containing the
+'Statement Library table should be open. Change the constant C_LibraryPath to point the correct location and the
+'latest version of the statement library document.
+'Latest version loaded from: C:\Users\Joseph\Desktop\EasyDoc (TM)\Statement Library\Statement Library 1.3.docx
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+Sub LoadLibrary()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to load the contents of the Statment Library table as Building Blocks.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oTable As Word.Table
+Dim oRow As Word.Row
+Dim oRng As Word.Range
+Dim oRngContent As Word.Range
+Dim sCategory As String
+Dim sBBName As String
+  'Delete all Building Blocks in custom gallery 5.
+  DeleteAllBuildingBlocks
+  'Set oTable equal to Statement Library.
+  Set oTable = Documents(C_LibraryPath).Tables(1)
+  For Each oRow In oTable.Rows
+    If oRow.Cells(1).Range.Shading.BackgroundPatternColorIndex = 6 Then
+      'Category row
+      Set oRng = oRow.Cells(1).Range
+      oRng.End = oRng.End - 1
+      sCategory = oRng.Text
+      GoTo NextRow
+    End If
+    'Get Building Block name.
+    Set oRng = oRow.Cells(1).Range
+    oRng.End = oRng.End - 1
+    sBBName = oRng.Text
+    'Get Building Block content.
+    Set oRngContent = oRow.Cells(2).Range
+    oRngContent.End = oRngContent.End - 1
+    'Add Building Block.
+    Templates(ThisDocument.FullName).BuildingBlockEntries.Add sBBName, wdTypeCustom5, sCategory, oRngContent, , wdInsertContent
+NextRow:
+  Next oRow
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub BBNameLength()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to loop through the Statement Library table and highlight all Library
+'item names that are over 32 characters long (max length for Building Block name).
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oTable As Word.Table
+Dim oRow As Word.Row
+Dim oRng As Word.Range
+  'Set oTable equal to Statement Library.
+  Set oTable = Documents(C_LibraryPath).Tables(1)
+  For Each oRow In oTable.Rows
+    If Not oRow.Cells(1).Range.Shading.BackgroundPatternColorIndex = 6 Then
+      Set oRng = oRow.Cells(1).Range
+      oRng.End = oRng.End - 1
+      If Len(oRng) > 32 Then
+        oRng.Shading.BackgroundPatternColor = wdColorBrightGreen
+      Else
+        oRng.Shading.BackgroundPatternColor = wdColorAutomatic
+      End If
+    End If
+  Next oRow
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub CategoryNameLength()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to loop through the Statement Library table and highlight all Library category
+'names that are over 64 characters long (max length for Building Block category names).
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oTable As Word.Table
+Dim oRow As Word.Row
+Dim oRng As Word.Range
+  'Set oTable equal to Statement Library.
+  Set oTable = Documents(C_LibraryPath).Tables(1)
+  For Each oRow In oTable.Rows
+    If oRow.Cells(1).Range.Shading.BackgroundPatternColorIndex = 6 Then
+      Set oRng = oRow.Cells(1).Range
+      oRng.End = oRng.End - 1
+      If Len(oRng) > 64 Then
+        oRng.Shading.BackgroundPatternColor = wdColorBlue
+      Else
+        oRng.Shading.BackgroundPatternColor = wdColorAutomatic
+      End If
+    End If
+  Next oRow
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub ListAllBuildingBlocks()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to list all Building Blocks stored in custom gallery 5.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oTmp As Template
+Dim oCat As Word.Category
+Dim oBB As Word.BuildingBlock
+Dim i As Integer
+Dim j As Integer
+Dim lngCategories As Long
+Dim lngBBs As Long
+  Set oTmp = Templates(ThisDocument.FullName)
+  lngCategories = oTmp.BuildingBlockTypes(p_clngGalleryTypeL).Categories.Count
+  For i = lngCategories To 1 Step -1
+    Set oCat = oTmp.BuildingBlockTypes(p_clngGalleryTypeL).Categories(i)
+    lngBBs = oCat.BuildingBlocks.Count
+    For j = lngBBs To 1 Step -1
+      Set oBB = oCat.BuildingBlocks(j)
+      With oBB
+        Debug.Print "Category: " & .Category.Name
+        Debug.Print "Category index: " & .Category.Index
+        Debug.Print "Building Block name: " & .Name
+        Debug.Print "Building Block index: " & .Index & vbCr & vbCr
+      End With
+    Next j
+  Next i
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub DeleteAllBuildingBlocks()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to delete all Building Blocks stored in custom gallery 5.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oTmp As Template
+Dim oBB As Word.BuildingBlock
+Dim i As Integer
+Dim j As Integer
+Dim lngCategories As Long
+Dim lngBBs As Long
+Dim oCat As Word.Category
+  Set oTmp = Templates(ThisDocument.FullName)
+  lngCategories = oTmp.BuildingBlockTypes(p_clngGalleryTypeL).Categories.Count
+  For i = lngCategories To 1 Step -1
+    Set oCat = oTmp.BuildingBlockTypes(p_clngGalleryTypeL).Categories(i)
+    lngBBs = oCat.BuildingBlocks.Count
+    For j = lngBBs To 1 Step -1
+      Set oBB = oCat.BuildingBlocks(j)
+      oBB.Delete
+    Next j
+  Next i
+lbl_Exit:
+  Exit Sub
+End Sub
+
+' Content Control Type Enumerations
+' ---------------------------------
+'wdContentControlBuildingBlockGallery  5
+'wdContentControlCheckBox              8
+'wdContentControlComboBox              3
+'wdContentControlDate                  6
+'wdContentControlGroup                 7
+'wdContentControlDropdownList          4
+'wdContentControlPicture               2
+'wdContentControlRepeatingSection      9
+'wdContentControlRichText              0
+'wdContentControlText                  1
+
+' Building Block Gallery Type Enumerations
+'-----------------------------------------
+'wdTypeCustom1                 29  Custom building block.
+'wdTypeCustom2                 30  Custom building block.
+'wdTypeCustom3                 31  Custom building block.
+'wdTypeCustom4                 32  Custom building block.
+'wdTypeCustom5                 33  Custom building block.
+'wdTypeCustomAutoText          23  Custom autotext building block.
+'wdTypeCustomBibliography      35  Custom bibliography building block.
+'wdTypeCustomCoverPage         16  Custom cover page building block.
+'wdTypeCustomEquations         17  Custom equations building block.
+'wdTypeCustomFooters           18  Custom footers building block.
+'wdTypeCustomHeaders           19  Custom headers building block.
+'wdTypeCustomPageNumber        20  Custom page numbering building block.
+'wdTypeCustomPageNumberBottom  26  Building block for custom page numbering on the bottom of the page.
+'wdTypeCustomPageNumberPage    27  Custom page numbering building block.
+'wdTypeCustomPageNumberTop     25  Building block for custom page numbering on the top of the page.
+'wdTypeCustomQuickParts        15  Custom quick parts building block.
+'wdTypeCustomTableOfContents   28  Custom table of contents building block.
+'wdTypeCustomTables            21  Custom table bulding block.
+'wdTypeCustomTextBox           24  Custom text box building block.
+'wdTypeCustomWatermarks        22  Custom watermark building block.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

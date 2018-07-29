@@ -1,0 +1,1212 @@
+Attribute VB_Name = "modMarkup"
+
+Option Explicit
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' modMarkup
+' By J F Pollock, josephfpollock@gmail.com
+'
+' This module contains all the procedures required to insert, edit, and remove user variable Content Controls.
+'
+' This module contains the following procedures:
+'
+'   InsertShortText
+'   InsertDropDown
+'   InsertLibraryEntry
+'   RangeNeedsAdjustment(ByRef Range As Word.Range) As Boolean
+'   InsertSavedVariable(ctrlTag As String)
+'   EditVariable
+'   EditShortText(oDoc As Document)
+'   EditDropDown(oDoc As Document)
+'   EditLibraryEntry(oDoc As Document)
+'   RemoveVariable (sType as String)
+'   RemoveSelected
+'   RemoveAllSameTitle
+'   RemoveAllVariables
+'   DeleteCC(ByRef oCC As ContentControl)
+'   ResetDocumentVariables
+'   ShowSavedVariables
+'   SaveUserVariable
+'
+' Documentation is in each procedure.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+                                                                                                                                  
+Sub InsertShortText()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to insert a Short Text (ST) user variable (Plain Text Content Control) at
+'the cursor location or in the selected range.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim uf As ufShortText
+Dim oCC As Word.ContentControl
+Dim oRng As Word.Range
+Dim strShortTextName As String   'ST variable name returned via userform property ufST.ShortTextName
+
+  On Error GoTo err_Handler
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Test for interfering CCs; this could mean that another appCC
+  'is selected, that the selection contains other appCCs, or that
+  'the boundary of the selection lies within or on the boundary
+  'of another appCC.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If fcnInterferringOrAdjactentCC Then
+    MsgBox p_cstrLoc, vbOKOnly, "Can't insert variable here"
+    Exit Sub
+  End If
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'There are no interferring CCs therefore p_appCC should be nothing - ensure this.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set p_appCC = Nothing
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Test for valid content by initially adding the required CC purely
+  'to ensure it doesn't throw any errors. If no errors are encountered
+  'then delete the CC and continue with the procedure. Another approach
+  'would be to leave the added CC in place and write the required code
+  'to remove it should an error be encountered later in the procedure, or
+  'if the form is cancelled etc.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oRng = Selection.Range
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If the given CC can't be added around the selected content
+  'then the following line will throw error number 4198.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oCC = oRng.ContentControls.Add(1, oRng) '1 - wdContentControlText
+  oCC.Delete
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  'We now have valid content and a valid location.
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  p_bAppInsert = True
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Display the userform to collect variable properties.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set uf = New ufShortText
+  uf.Show
+  
+  If uf.CancelClose Then GoTo lbl_Exit
+
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  'Get the variable name chosen by the user via
+  'the custom userform property.
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  strShortTextName = uf.ShortTextName
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Test selection to ensure that variable won't be saved with paragraph mark.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If RangeNeedsAdjustment(oRng) Then
+    
+    'Adjust range.
+    With oRng
+      .InsertAfter " "
+      .End = .End - 1
+    End With
+
+    'Add user variable CC.
+    Set oCC = oRng.ContentControls.Add(1, oRng)
+
+    'Remove adjustment.
+    Set oRng = oRng.Paragraphs(oRng.Paragraphs.Count).Range
+    
+    With oRng
+      .End = .End - 1
+      .start = .End - 1
+      .Text = ""
+    End With
+
+  Else
+  
+    'Add user variable CC. - no adjustment needed.
+    Set oCC = oRng.ContentControls.Add(1, oRng)
+    
+  End If
+
+  If oCC Is Nothing Then
+    MsgBox "A problem was encountered while adding the variable.", vbOKOnly + vbInformation, "Variable not added"
+    GoTo lbl_Exit
+  End If
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  'Set CC properties.
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  With oCC
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'PlaceHolderText reverts back to default "Click here to enter text."
+    'if set in the ContentControlAfterAdd event; set here:
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    .LockContentControl = False
+    .LockContents = False
+    .Title = "ST: " & strShortTextName
+    .SetPlaceholderText Text:=strShortTextName
+    .Range.Text = strShortTextName
+    .Range.NoProofing = True
+    .LockContents = True
+    .LockContentControl = True
+  End With
+  
+lbl_Exit:
+
+  If Not uf Is Nothing Then
+    Unload uf 'Triggers QueryClose
+    Set uf = Nothing
+  End If
+  p_bAppInsert = False
+  Exit Sub
+  
+err_Handler:
+  If Err.Number <> 4198 Then
+    #If DEBUGMODE = 1 Then
+      Stop
+      Debug.Print Err.Number & " " & Err.Description
+    #End If
+  End If
+  Resume lbl_Exit
+End Sub
+
+Sub InsertDropDown()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to insert a Drop Down (DD) user variable (Combo Box Content Control) at the cursor location or in
+'the selected range. Previously, ufDropDown was displayed as modal, but has now been changed to modeless to
+'allow the user to make selections while the form is active.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim uf As ufDropDown
+Dim oCC As Word.ContentControl
+Dim oRng As Word.Range
+
+  On Error GoTo err_Handler
+  
+  '''''''''''''''''''''''''
+  'Test for interfering CCs
+  '''''''''''''''''''''''''
+  If fcnInterferringOrAdjactentCC Then
+    MsgBox p_cstrLoc, vbOKOnly, "Can't insert variable here"
+    Exit Sub
+  End If
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'There are no interferring CCs therefore p_appCC should be nothing.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set p_appCC = Nothing
+  
+  '''''''''''''''''''''''''
+  'Test for valid content.
+  '''''''''''''''''''''''''
+  Set oRng = Selection.Range
+  
+  Set oCC = oRng.ContentControls.Add(3, oRng) '3 - wdContentControlComboBox
+  oCC.Delete
+    
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  'We now have a valid location and valid content.
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  Set uf = New ufDropDown
+  uf.Show
+  
+lbl_Exit:
+  Exit Sub
+
+err_Handler:
+  If Err.Number <> 4198 Then
+    #If DEBUGMODE = 1 Then
+      Stop
+      Debug.Print Err.Number & " " & Err.Description
+    #End If
+  End If
+  Resume lbl_Exit
+End Sub
+
+
+Sub InsertLibraryEntry()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to insert a Library Entry (LE) user variable (Rich Text Content Control)
+'at the cursor location or in the selected range.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim uf As ufLibraryEntry
+Dim oDoc As Word.Document
+Dim oCC As Word.ContentControl
+Dim oRng As Word.Range
+Dim strLibraryEntryName As String         'Library Entry variable name returned via custom userform property ufLibraryEntry.LibraryEntryName
+Dim strLibraryEntryDescription As String  'Library Entry variable description returned via custom userform property ufLibraryEntry.LibraryEntryDescription
+
+  On Error GoTo err_Handler
+
+  '''''''''''''''''''''''''
+  'Test for interfering CCs
+  '''''''''''''''''''''''''
+  If fcnInterferringOrAdjactentCC Then
+    MsgBox p_cstrLoc, vbOKOnly, "Can't insert variable here"
+    Exit Sub
+  End If
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'There are no interferring CCs therefore p_appCC should be nothing - ensure this.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set p_appCC = Nothing
+  
+  '''''''''''''''''''''''''
+  'Test for valid content.
+  '''''''''''''''''''''''''
+  Set oRng = Selection.Range
+  Set oDoc = oRng.Document
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Trying to add a Library variable solely around an Inline Shape in the header or footer creates
+  'an error "Rich Text control cannot be applied here". This error doesn't occur if additional text
+  'or the paragraph mark is included in the selection range. Test for inline shapes in all headers
+  'and footers and allow variable entry since this is where users would possibly select their existing
+  'company logo to add a Library Entry variable.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Selection
+    Select Case .StoryType
+      Case 6, 7, 8, 9, 10, 11
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'If the selection type is an inline shape (.Type = 7) and falls within any header or footer storytype
+        '(.StoryType = 6, 7, 8, 9, 10, 11) then append a non-printing control character to the end of the
+        'selection. Extend the selection range around it to allow the variable to be added.
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        If .Type = 7 Then
+          Set oRng = .Range
+          oRng.Collapse wdCollapseEnd
+          oRng.Text = Chr(4) 'ASCII code 04 = EOT (End of Transmission, diamonds card suit).
+          Set oRng = Selection.Range
+          oRng.End = oRng.End + 1
+          oRng.Select
+        End If
+    End Select
+  End With
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'The following line triggers the CCAfterAdd event which also temporarily deselects the
+  'current selection. The original range is re-selected when the AfterAdd event is exited
+  '(i.e. before oCC.Delete). However, this isn't the case when a table is part of the
+  'selection - the original range isn't re-selected leaving len(selection) = 0. This causes
+  'a problem during the form's initialize event since it is assumed that nothing is selected
+  'and therefore the chkKeepSelection checkbox is hidden. Ensure the original range is selected.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oCC = oRng.ContentControls.Add(0, oRng)  '0 - wdContentControlRichText
+  oCC.Delete
+  oRng.Select
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  'We now have valid content and a valid location.
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  p_bAppInsert = True
+
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  'Display userform (ufLibraryEntry) and prompt
+  'the user for a variable name.
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  Set uf = New ufLibraryEntry
+  uf.Show
+
+  If uf.CancelClose Then GoTo lbl_Exit
+
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  'Get the variable properties chosen by the user.
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  strLibraryEntryName = uf.LibraryEntryName
+  strLibraryEntryDescription = uf.LibraryEntryDescription
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Test selection to ensure that variable won't be saved with paragraph mark.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If RangeNeedsAdjustment(oRng) Then
+  
+    'Adjust range.
+    With oRng
+      .InsertAfter " "
+      .End = .End - 1
+    End With
+    
+    'Add user variable CC.
+    Set oCC = oRng.ContentControls.Add(0, oRng) '0 wdContentControlRichText
+    
+    'Remove adjustment.
+    Set oRng = oRng.Paragraphs(oRng.Paragraphs.Count).Range
+    With oRng
+      .End = .End - 1
+      .start = .End - 1
+      .Text = ""
+    End With
+    
+  Else
+  
+    'Add user variable CC. - no adjustment needed.
+    Set oCC = oRng.ContentControls.Add(0, oRng) '0 wdContentControlRichText
+    
+  End If
+
+  If oCC Is Nothing Then
+    MsgBox "A problem was encountered while adding the variable.", vbOKOnly + vbInformation, "Variable not added"
+    GoTo lbl_Exit
+  End If
+
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  'Set control properties.
+  ''''''''''''''''''''''''''''''''''''''''''''''
+  With oCC
+  
+    .LockContentControl = False
+    .LockContents = False
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'PlaceHolderText reverts back to default "Click here to enter text."
+    'if set in the ContentControlAfterAdd event; set here:
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    .Title = "LE: " & strLibraryEntryName
+    .SetPlaceholderText Text:=strLibraryEntryName
+    
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If the user has chosen not to keep the selected text
+    'in place, then we carry out the same action as we have
+    'in the other variables; change the range text to equal PHT.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If uf.KeepSelection = False Then
+      .Range.Text = strLibraryEntryName
+    End If
+    
+    .Range.NoProofing = True
+    
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'NOTE: as for both other variables, the BackgroundPatternColor has been
+    '      set in clsDocumentEvents. For whatever reason, it doesn't seem to
+    '      stick for a Rich Text CC which has been added at the Insertion
+    '      Point. We need to set it again here. Is there a reason for this?
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If p_bHighlight Then .Range.Font.Shading.BackgroundPatternColor = p_clngLEColor
+
+    oDoc.Variables(.Title).Value = uf.LibraryEntryDescription
+
+    .LockContents = True
+    .LockContentControl = True
+    
+  End With
+
+lbl_Exit:
+  If Not uf Is Nothing Then
+    Unload uf
+    Set uf = Nothing
+  End If
+  p_bAppInsert = False
+  Exit Sub
+  
+err_Handler:
+  If Err.Number <> 4198 Then
+    #If DEBUGMODE = 1 Then
+      Stop
+      Debug.Print Err.Number & " " & Err.Description
+    #End If
+  End If
+  Resume lbl_Exit
+End Sub
+
+Function RangeNeedsAdjustment(ByRef Range As Word.Range) As Boolean
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'This function tests the selection for the following condition:
+'
+'The start of the selection range (or insertion point) is at the start of a paragraph
+'and the end of the selection range is at the end of the same paragraph (either including
+'the paragraph mark or immediately before it).
+'
+'If this condition is satisfied when adding a CC user variable or saving a Building Block
+'then the Building Block or saved variable will always be inserted with a paragraph mark
+'(i.e. the inserted variable or Building Block will end the paragraph).
+'
+'This means that an inserted; Building Block, saved variable, or copied & pasted variable
+'will separate an existing paragraph if inserted within it.
+'
+'Therefore, if the condition is satisfied then RangeNeedsAdjustment = True to avoid this.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oRng As Word.Range
+Dim SelectionStart As Long, SelectionEnd As Long
+Dim ParagraphStart As Long, ParagraphEnd As Long
+  Set oRng = Range
+  'Calculate selection & paragraph parameters.
+  With oRng
+    SelectionStart = .start
+    SelectionEnd = .End
+    ParagraphStart = .Paragraphs(1).Range.start
+    ParagraphEnd = .Paragraphs(.Paragraphs.Count).Range.End
+  End With
+  'Initial tests.
+  If oRng.Paragraphs.Count > 1 Then Exit Function
+  If SelectionStart <> ParagraphStart Then Exit Function
+  'Test selection end.
+  Select Case SelectionEnd
+    Case ParagraphEnd: oRng.End = oRng.End - 1: RangeNeedsAdjustment = True
+    Case ParagraphEnd - 1: RangeNeedsAdjustment = True
+    Case Else: Exit Function
+  End Select
+lbl_Exit:
+  Exit Function
+End Function
+
+Sub InsertSavedVariable(ctrlTag As String)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to insert a saved variable into the document at the cursor location or in the selected range.
+'Saved variables are stored as Building Block entries in this template.
+'
+'Parameter:
+'----------
+' ctrlTag   The Control.Tag property is passed from a clicked dynamic menu button via modRibbonControl.
+'           It gives the name of the Building Block to be inserted, which is also equal to the title of
+'           the CC user variable stored in the Building Block.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  On Error GoTo lbl_Exit
+  
+  If fcnInterferringOrAdjactentCC Then
+    MsgBox p_cstrLoc, vbOKOnly + vbInformation, "Can't insert variable here"
+    Exit Sub
+  End If
+  
+  Set p_appCC = Nothing
+  p_bAppInsert = True
+  
+  If Not BuildingBlockExists(p_clngGalleryTypeV, p_cstrBBCategoryV, ctrlTag) Then
+    MsgBox "The selected variable can't be found. This may be due to manual modification " & _
+           "of custom Building Blocks.", vbOKOnly + vbExclamation, "Variable not found"
+    'Force the dynamic menu to redefine itself.
+    If myRibbon Is Nothing Then Set myRibbon = GetRibbon
+    myRibbon.InvalidateControl "Grp1DMenu1"
+    GoTo lbl_Exit
+  End If
+
+  'Insert the Building Block.
+  If fcnInsertBuildingBlock(p_clngGalleryTypeV, p_cstrBBCategoryV, ctrlTag) = False Then
+    MsgBox "An error occurred while trying to insert the saved variable.", vbOKOnly + vbExclamation, "Variable not inserted"
+  End If
+  
+lbl_Exit:
+  p_bAppInsert = False
+  Exit Sub
+End Sub
+
+Sub EditVariable()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to edit the properties of an existing user variable Content Control.
+'This procedure determines the particular type of user variable CC that is being
+'edited and the target document which contains it. Execution is then passed to the
+'appropriate procedure downstream.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Word.Document
+
+  On Error GoTo lbl_Exit
+  
+  'If no variable is selected - exit.
+  If p_appCC Is Nothing Then
+    MsgBox "First select a variable by clicking on it.", vbOKOnly + vbInformation, "No variable selected"
+    Exit Sub
+  End If
+  
+  'Get the target document.
+  Set oDoc = p_appCC.Range.Document
+  
+  Select Case p_appCC.Type
+    Case 1
+      'ST variable
+      Call EditShortText(oDoc)
+    Case 3
+      'DD variable
+      Call EditDropDown(oDoc)
+    Case 0
+      'LE variable
+      Call EditLibraryEntry(oDoc)
+  End Select
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub EditShortText(oDoc As Word.Document)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to allow editing of a Short Text user variable within the target document oDoc.
+'
+' Parameter:
+'-----------
+' oDoc      oDoc is the target document in case of multiple documents; it is calculated in
+'           the parent procedure EditVariable.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim uf As ufShortText
+Dim oCCs As Word.ContentControls
+Dim oCC As Word.ContentControl
+Dim strShortTextName As String  'Short Text variable name returned via custom uf property ufST.ShortTextName
+  
+  On Error GoTo lbl_Exit
+  
+  Set uf = New ufShortText
+  uf.Show
+  If uf.CancelClose Then GoTo lbl_Exit
+  
+  'Get the variable name chosen by the user.
+  strShortTextName = uf.ShortTextName
+  
+  'If no changes have been made then exit.
+  If "ST: " & strShortTextName = p_appCC.Title Then GoTo lbl_Exit
+  
+  'Get the selected CC and all duplicates.
+  Set oCCs = oDoc.SelectContentControlsByTitle(p_appCC.Title)
+  
+  'Change the properties of the selected CC and all duplicates.
+  TurnOffFunctionality
+  For Each oCC In oCCs
+    With oCC
+      .LockContents = False
+      .Title = "ST: " & strShortTextName
+      .SetPlaceholderText Text:=strShortTextName
+      .Range.Text = strShortTextName
+      .LockContents = True
+    End With
+  Next oCC
+  
+lbl_Exit:
+  TurnOnFunctionality
+  If Not uf Is Nothing Then
+    Unload uf
+    Set uf = Nothing
+  End If
+  Exit Sub
+End Sub
+
+
+Sub EditDropDown(oDoc As Word.Document)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to allow editing of a Drop-Down user variable within the target document oDoc.
+'
+' Parameter:
+'-----------
+' oDoc      oDoc is the target document in case of multiple documents; it is calculated in
+'           the parent procedure EditVariable.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim uf As ufDropDown
+'Dim oCCs As Word.ContentControls
+'Dim oCC As Word.ContentControl
+'Dim strDropDownName As String         'Drop Down variable name returned via ufDD.DropDownName property.
+'Dim strDropDownDescription As String  'Drop Down variable description returned via ufDD.DropDownDescription property.
+'Dim arrDropDownValues() As Variant    'Drop Down variable values returned via ufDD.DropDownValues property.
+'Dim i As Long
+  On Error GoTo lbl_Exit:
+  '''''''''''''''''''
+  'Display the form.
+  '''''''''''''''''''
+  Set uf = New ufDropDown
+  uf.Show
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'NOTE:
+  '-------
+  'The userform (ufDropDown) has now been made modeless in order to allow the user
+  'to make selections in the document and add them to the DD list while the uf is
+  'loaded & displayed. All commented out code in this proc was used for the modal version.
+  'This code will be kept in place for a period of time to allow testing of the modeless
+  'version. It will also allow the modal version to be re-instated if need be.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+   
+'   If uf.CancelClose Then
+'     GoTo lbl_Exit
+'   Else
+'   ''''''''''''''''''''''''''''''''''''''''''''''''
+'   'Get the variable properties chosen by the user.
+'   ''''''''''''''''''''''''''''''''''''''''''''''''
+'     With uf
+'       strDropDownName = .DropDownName
+'       strDropDownDescription = .DropDownDescription
+'       arrDropDownValues = .DropDownValues
+'     End With
+'   End If
+'
+'   '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   'If existing title is different to the new title then delete the current
+'   'document variable description. All like named variables share the same
+'   'description so only need to delete once.
+'   '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   If p_appCC.Title <> "DD: " & strDropDownName Then
+'
+'     ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'     'Delete document variable description if it exists.
+'     'Writing an empty string to the existing variable will delete it.
+'     ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'     oDoc.Variables(p_appCC.Title).Value = ""
+'
+'   End If
+'
+'   '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   'Write new document variable description or edit existing.
+'   'The current variable description will be written to the
+'   'document variable value even if it is unchanged -  this
+'   'seems easier than writing more code to determine a change.
+'   '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   oDoc.Variables("DD: " & strDropDownName).Value = strDropDownDescription
+'
+'   ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   'Get the collection of all Combo Box CCs sharing the same .Title property.
+'   'If the .Title property of the edited CC is shared by multiple CC user
+'   'variables, then the edited drop down entries must be applied to all document
+'   'CCs that share the same title. This is required to ensure that all CC user
+'   'variables with the same name have identical properties.
+'   ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Set oCCs = oDoc.SelectContentControlsByTitle(p_appCC.Title)
+'
+'   For Each oCC In oCCs
+'
+'     ''''''''''''''''''''''''''''''''
+'     'Change the variable properties:
+'     '''''''''''''''''''''''''''''''''
+'     With oCC
+'
+'       .LockContents = False
+'
+'       .Title = "DD: " & strDropDownName
+'       .SetPlaceholderText Text:=strDropDownName
+'       .Range.Text = .PlaceholderText
+'
+'       ''''''''''''''''''''''''''''''''''''''''''''''''
+'       'Clear existing values and write new drop down
+'       'values into the Combo Box Content Control.
+'       ''''''''''''''''''''''''''''''''''''''''''''''''
+'       .DropdownListEntries.Clear
+'       For i = LBound(arrDropDownValues) To UBound(arrDropDownValues)
+'         .DropdownListEntries.Add arrDropDownValues(i)
+'       Next i
+'
+'       .LockContents = True
+'
+'     End With
+'
+'   Next oCC
+'
+'   '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   'At this point the CCs drop-down list should be inaccessible to the user since its contents
+'   'have been locked, however, the drop-down list of the final CC to be processed will remain
+'   'accessible immediately after an edit action (in a collection of one then this will be the CC
+'   'selected for editing). The contents of the final CC to be processed will remain accessible if
+'   'the user immediately navigates to other CC user variables. It will only become inaccessible
+'   'when the user exits a CC (any CC) immediately to the right of the CC or alternatively into a
+'   'blank paragraph. The reason for this is a condition in the CC Exit event:
+'   '
+'   'If Selection.Text = Chr(13) Or Selection.Range.Start = .Range.End + 1 Then Selection.Font.Reset
+'   '
+'   'Satisfying the above condition in the CC Exit event causes a selection font reset which presumably
+'   'accomplishes some type of screen refresh - regardless, this action will truely lock the contents of
+'   'the final CC to be processed.
+'   '
+'   'Avoid this by forcing a screen refresh immediately after an edit action:
+'   '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Application.ScreenRefresh
+
+lbl_Exit:
+'  If Not uf Is Nothing Then
+'    Unload uf
+'    Set uf = Nothing
+'  End If
+  Exit Sub
+End Sub
+
+Sub EditLibraryEntry(oDoc As Word.Document)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to allow editing of a Drop-Down user variable within the target document oDoc.
+'
+' Parameter:
+'-----------
+' oDoc      oDoc is the target document in case of multiple documents; it is calculated in
+'           the parent procedure EditVariable.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim uf As ufLibraryEntry
+Dim oCCs As Word.ContentControls
+Dim oCC As Word.ContentControl
+Dim strLibraryEntryName As String         'Drop Down variable name returned via custom uf property ufDD.DropDownName
+Dim strLibraryEntryDescription As String  'Drop Down variable description returned via custom uf property ufDD.DropDownDescription
+  
+  On Error GoTo lbl_Exit:
+  
+  '''''''''''''''''''''''''''''''''''''''''''''
+  'Display userform (ufLibraryEntry) and prompt
+  'the user for new properties.
+  '''''''''''''''''''''''''''''''''''''''''''''
+  Set uf = New ufLibraryEntry
+  uf.Show
+  If uf.CancelClose Then GoTo lbl_Exit
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''
+  'Get the variable properties chosen by the user.
+  ''''''''''''''''''''''''''''''''''''''''''''''''
+  With uf
+    strLibraryEntryName = .LibraryEntryName
+    strLibraryEntryDescription = .LibraryEntryDescription
+  End With
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If the existing title of the variable in the document is different
+  'from the title in the form, then delete the current document variable
+  'description. All like named variables share the same description so
+  'only need to delete once.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If p_appCC.Title <> "LE: " & strLibraryEntryName Then
+    'Writing an empty string to the existing variable value will delete it.
+    oDoc.Variables(p_appCC.Title).Value = ""
+  End If
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Write new document variable description or edit existing. The current variable
+  'description will be written to the document variable value even if it is unchanged,
+  'this seems easier than writing more code to determine a change.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  oDoc.Variables("LE: " & strLibraryEntryName).Value = strLibraryEntryDescription
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Change the properties of the selected CC and any duplicates.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oCCs = oDoc.SelectContentControlsByTitle(p_appCC.Title)
+  
+  TurnOffFunctionality
+  For Each oCC In oCCs
+    With oCC
+      .LockContents = False
+      .Title = "LE: " & strLibraryEntryName
+      .SetPlaceholderText Text:=strLibraryEntryName
+      If uf.KeepSelection = False Then
+        .Range.Text = strLibraryEntryName
+        .Range.NoProofing = True
+      End If
+      .LockContents = True
+    End With
+  Next oCC
+  
+lbl_Exit:
+  TurnOnFunctionality
+  If Not uf Is Nothing Then
+    Unload uf
+    Set uf = Nothing
+  End If
+  Exit Sub
+End Sub
+
+Sub RemoveVariable(sType As String)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to remove user variables. Execution is then passed to the appropriate
+'procedure downstream based on the value of sType.
+
+' Parameter:
+'-----------
+' sType     String value which identifies the type of remove action to carry out.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  On Error GoTo lbl_Exit
+  
+  Select Case sType
+  
+    Case "Selected"
+      RemoveSelected
+    
+    Case "SameTitle"
+      RemoveAllSameTitle
+    
+    Case "All"
+      RemoveAllVariables
+      
+  End Select
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub RemoveSelected()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Removes the selected CC user variable, or all variables within the selected range.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCCs As Word.ContentControls
+Dim oCC As Word.ContentControl
+Dim oRng As Word.Range
+Dim oRngControlEnd As Word.Range
+Dim lngPos As Long
+  On Error GoTo lbl_Exit
+  Set oRng = Selection.Range
+  
+  'Insertion point or range?
+  If oRng.start = oRng.End Then
+  
+    'Insertion point
+    
+    If p_appCC Is Nothing Then
+      MsgBox "Select a single variable by clicking on it, or highlight multiple.", vbOKOnly + vbInformation, "No variables selected"
+      Exit Sub
+    End If
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If the insertion point is at the beginning of the control when
+    ''Remove' is clicked, then record the position at the end of the
+    'control and create a new IP range at this position.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'    If oRng.start = p_appCC.Range.start Then
+'      lngPos = p_appCC.Range.End
+'      Set oRngControlEnd = oRng.Duplicate
+'      oRngControlEnd.SetRange lngPos, lngPos
+'    End If
+    DeleteCC p_appCC
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If the IP was at the beginning of the control before it was removed
+    'then select the new range. This stops the continuation of variable
+    'shading at the start of the previous control.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'    If lngPos > 0 Then
+'      oRngControlEnd.Select
+'    End If
+
+  Else
+  
+  
+    'Range
+    
+    If oRng.ContentControls.Count > 0 Then
+      
+      Set oCCs = oRng.ContentControls
+      For Each oCC In oCCs
+        DeleteCC oCC
+      Next oCC
+    
+    ElseIf Not p_appCC Is Nothing Then
+    
+      'If oRng = p_appCC.Range Then
+        ''''''''''''''''''''''''''''''''''''''''''''''''''
+        'CC has been selected using CC selector tab, which
+        'creates a range with CCs.Count = 0. Remove CC.
+        ''''''''''''''''''''''''''''''''''''''''''''''''''
+        DeleteCC p_appCC
+      'End If
+    
+    Else
+    
+      'Do nothing - no variables selected.
+      MsgBox "Select a single variable by clicking on it, or highlight multiple.", vbOKOnly + vbInformation, "No variables selected"
+    
+    End If
+      
+      
+     
+  End If
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub RemoveAllSameTitle()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to remove all user variables with the same .Title property
+'as the selected CC user variable.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Word.Document
+Dim oCC As Word.ContentControl
+Dim oCCs As Word.ContentControls
+  
+  If p_appCC Is Nothing Then
+    MsgBox "First select a variable by clicking on it.", vbOKOnly + vbInformation, "No variable selected"
+    Exit Sub
+  End If
+  
+  Set oDoc = p_appCC.Range.Document
+  Set oCCs = oDoc.SelectContentControlsByTitle(p_appCC.Title)
+  
+  Select Case MsgBox("All occurences of the following variable will be removed from the document." & vbNewLine & vbNewLine & _
+                     "Variable name: " & p_appCC.PlaceholderText & vbNewLine & vbNewLine & _
+                     "Do you wish to continue?", vbYesNo + vbExclamation + vbDefaultButton2, "Remove all with same name?")
+    Case vbYes
+      
+      'Remove all variables.
+      Application.ScreenUpdating = False
+      On Error Resume Next
+      
+      For Each oCC In oCCs
+        DeleteCC oCC
+      Next oCC
+      
+      On Error GoTo 0
+      Application.ScreenUpdating = True
+    
+    Case vbNo
+      'Cancel/X - do nothing.
+      
+  End Select
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub RemoveAllVariables()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Removes all CC user variables from the ActiveDocument.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Word.Document
+Dim oCC As Word.ContentControl
+Dim oCCs As Word.ContentControls
+  
+  Set oDoc = ActiveDocument
+  Set oCCs = oDoc.SelectContentControlsByTag("ccApp")
+  
+  If oCCs.Count < 1 Then
+    MsgBox "There are currently no variables in the document.", vbOKOnly + vbInformation, "No variables"
+    Exit Sub
+  End If
+  
+  Select Case MsgBox("All variables will be removed from the current document. " & vbNewLine & vbNewLine & _
+                     "Do you wish to continue?", vbYesNo + vbExclamation + vbDefaultButton2, "Remove all?")
+    Case vbYes
+    
+      'Remove all variables.
+      Application.ScreenUpdating = False
+      On Error Resume Next
+      
+      For Each oCC In oCCs
+        DeleteCC oCC
+      Next oCC
+      
+      On Error GoTo 0
+      Application.ScreenUpdating = True
+      
+    Case vbNo
+      'Cancel/X - do nothing.
+      
+  End Select
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub DeleteCC(ByRef oCC As ContentControl)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to delete an application added Content Control (oCC) from the document. If oCC is of type 3 (Combo Box)
+'or type 0 (Rich Text) then the corresponding document variable description (stored as a document variable) is also
+'deleted from the document if it exists.
+'
+'Parameter:
+'----------
+' oCC   The Content Control to be deleted.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Word.Document
+Dim oCCs As Word.ContentControls
+Dim oTable As Word.Table
+
+  On Error GoTo err_Handler
+  
+  'Non-app CC - deal with these later.
+  If oCC.Tag <> "ccApp" Then Exit Sub
+
+  With oCC
+    .LockContents = False
+    .LockContentControl = False
+    .Range.Font.Shading.BackgroundPatternColor = -16777216
+    
+    'If Drop-Down or Library Entry..
+    If .Type = 0 Or .Type = 3 Then
+      
+      'Deal with document variable descriptions.
+      Set oDoc = .Range.Document
+      With oDoc.Variables
+        If .Count > 0 Then
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'One document variable description for all CCs with same title:
+          'If the CC user variable to be deleted is the last in the
+          'collection (i.e. it is the last CC user variable in the document
+          'with that particular title, then delete the associated document
+          'variable description.
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          Set oCCs = oDoc.SelectContentControlsByTitle(oCC.Title)
+          If oCCs.Count = 1 Then
+            '''''''''''''''''''''''''''''''''''''''''''''''
+            'Last variable with that title. Delete document
+            'variable description (if it exists).
+            '''''''''''''''''''''''''''''''''''''''''''''''
+            oDoc.Variables(oCC.Title).Value = ""
+          End If
+        End If
+      End With
+      
+    End If
+    
+    'Delete the range text if required.
+    If p_bRemoveTextWithVariable Then
+    
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Note: if the variable to be deleted is a Library Entry variable (CC type 0) which contains a
+      'table at the start or end of the variable range, then trying to delete the variable range using
+      '.Range.Delete throws error 5904 - Cannot edit Range. In this case we must test for, and delete
+      'any tables in the variable range.
+      '
+      'However, if the variable contains a single table only, then deleting the table will also delete
+      'the variable, therefore .Range.Delete will throw error 5825 Object has been deleted. In the case
+      'we will ignore the error and continue execution since the variable has already been deleted.
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      If .Type = 0 And .Range.Tables.Count > 0 Then
+        For Each oTable In .Range.Tables
+          oTable.Delete
+        Next oTable
+      End If
+      
+      .Range.Delete
+      
+    End If
+    
+    'Delete the CC.
+    .Delete
+  End With
+   
+lbl_Exit:
+  Exit Sub
+  
+err_Handler:
+  If Err.Number = 5825 Then
+    Resume Next
+  Else
+    Stop
+    Debug.Print Err.Number & " " & Err.Description
+    Resume Next
+  End If
+End Sub
+
+Sub ResetDocumentVariables()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to reset all variables in the ActiveDocument. Reset means that the variable's
+'value (.Range.Text) will be replaced by the variable's name (.PlaceHolderText).
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCC As Word.ContentControl
+Dim oCCs As Word.ContentControls
+
+  Set oCCs = ActiveDocument.SelectContentControlsByTag("ccApp")
+  
+  If oCCs.Count < 1 Then
+    MsgBox "No variables were found in the document.", vbOKOnly + vbInformation, "No variables found"
+    Exit Sub
+  End If
+
+  Select Case MsgBox("All variable values will be replaced by the variable name." & vbNewLine & vbNewLine & _
+                     "Do you wish to continue?", vbYesNo + vbExclamation + vbDefaultButton2, "Reset all?")
+    Case vbYes
+      'Reset all
+      Application.ScreenUpdating = False
+      On Error Resume Next
+      For Each oCC In oCCs
+        With oCC
+          .LockContents = False
+          .Range.Text = .PlaceholderText
+          .LockContents = True
+        End With
+      Next oCC
+      On Error GoTo 0
+      Application.ScreenUpdating = True
+      
+    Case vbNo
+      'Do nothing.
+      
+  End Select
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub ShowSavedVariables()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to display the user's saved variables via ufSavedVariables.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim uf As ufSavedVariables
+
+  On Error GoTo lbl_Exit
+  
+  If CategoryEmpty(p_clngGalleryTypeV, p_cstrBBCategoryV) Then
+    MsgBox "There are currently no saved variables.", vbOKOnly + vbInformation, "No saved variables"
+    Exit Sub
+  End If
+  
+  Set uf = New ufSavedVariables
+  uf.Show
+  Unload uf
+  Set uf = Nothing
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub SaveUserVariable()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to save the selected CC user variable (p_appCC) into the Saved Variables Building Block Gallery.
+'The variable will now be available via the dynamic ribbon menu, named 'Saved'.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oRng As Word.Range
+
+  'Ensure a CC user variable is selected.
+  If p_appCC Is Nothing Then
+    MsgBox "First select a variable by clicking on it.", vbOKOnly + vbInformation, "No variable selected"
+    Exit Sub
+  End If
+  
+  'Ensure it hasn't already been saved.
+  If BuildingBlockExists(p_clngGalleryTypeV, p_cstrBBCategoryV, p_appCC.Title) Then
+    MsgBox "Variable has already been saved.", vbOKOnly + vbInformation, "Variable exists"
+    Exit Sub
+  End If
+  
+  'Select the CC.
+  Set oRng = p_appCC.Range
+  With oRng
+    .End = .End + 1
+    .start = .start - 1
+    .Select
+  End With
+  
+  'Save it as a Building Block.
+  If fcnSaveBuildingBlock(oRng, p_clngGalleryTypeV, p_cstrBBCategoryV, p_appCC.Title) = False Then
+    MsgBox "An error occurred while trying to save the variable. Please try again." & vbCr & vbCr & _
+           "If this error persists, try clicking out of the variable then back into it.", vbOKOnly + vbExclamation, "Variable not saved"
+    Exit Sub
+  End If
+  
+  'Force the dynamic menu to redefine itself and show newly added control.
+  If myRibbon Is Nothing Then Set myRibbon = GetRibbon
+  myRibbon.InvalidateControl "Grp1DMenu1"
+  
+  'Inform the user.
+  MsgBox "Saved.", vbOKOnly + vbInformation, "Variable saved"
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

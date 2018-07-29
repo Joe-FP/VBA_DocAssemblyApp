@@ -1,0 +1,1792 @@
+VERSION 5.00
+Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} ufLibrary 
+   Caption         =   "Library"
+   ClientHeight    =   8100
+   ClientLeft      =   120
+   ClientTop       =   465
+   ClientWidth     =   17895
+   OleObjectBlob   =   "ufLibrary.frx":0000
+   ShowModal       =   0   'False
+   StartUpPosition =   2  'CenterScreen
+End
+Attribute VB_Name = "ufLibrary"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+
+Option Explicit
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' TODO:
+' -----
+' 1. Decide if CCs can be stored.
+'
+' NOTES:
+' ------
+' 1. Shapes and certain fields can't be previewed but will be stored and inserted correctly.
+' 2. BB Category name len max: 64 char  BB Name len max: 32 char  BB Description len max: 256 char
+' 3. String values for m_sLibraryAction:
+'    - MoveItemToExistingCategory
+'    - MoveItemToNewCategory
+'    - EditItem
+'    - DeleteItemOrCategory
+'    - Save
+'    - SaveToExistingCategory
+'    - SaveToNewCategory
+' 4. The template is updated when the Library form is closed (cmdCloseLibrary or "X").
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+'APIs for pasting to inkEdit control.
+#If VB7 Then
+  Private Declare PtrSafe Function SendMessage Lib "USER32" Alias _
+          "SendMessageA" (ByVal hWnd As LongPtr, ByVal wMsg As Long, ByVal wParam As LongPtr, lParam As Any) As LongPtr
+#Else
+  Private Declare Function SendMessage Lib "USER32" Alias _
+            "SendMessageW" (ByVal hWnd As Long, ByVal wMsg As Long, ByVal wParam As Long, lParam As Any) As Long
+#End If
+Private Const WM_PASTE = &H302
+
+Private WithEvents BBTree As clsTreeView
+Attribute BBTree.VB_VarHelpID = -1
+Private m_bLibraryEmpty As Boolean
+Private m_bSkipDropDownClick As Boolean
+Private m_bSkipDropDownListClick As Boolean
+Private m_sLibraryAction As String
+Private m_bNodeSelected As Boolean    'True when a node is selected and highlighted.
+Private Const csSep As String = "||#" 'Used to create unique node keys by separating category name and bb name (e.g. sKey:= CategoryName & "||#" BBName).
+                                      'csSep (||#) is not allowed to be included as part of Category or Building Block names.
+
+Private Sub UserForm_Initialize()
+  RestoreUserformToDefault
+  AddMinimizeButton Me.Caption
+  Set BBTree = New clsTreeView
+  With BBTree
+    Set .TreeControl = Me.fraTreeControl
+    Set .Images = Me.fraImageBox
+    .RootButton = False
+    .ShowLines = False
+    .ShowExpanders = False
+    .NodeHeight = 18
+    .Indentation = 15
+  End With
+  BuildBBTree
+End Sub
+
+Sub RestoreUserformToDefault()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Restores the userform to its default dimensions and all form controls to their default positions.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Re-enable all controls.
+  EnableControls Me, True
+  'Always disable - used with treeview to give node images.
+  With Me.fraImageBox
+    .Enabled = False
+    .Visible = False
+  End With
+  'Set userform default dims.
+  With Me
+    .Height = 412.5
+    .Width = 837.75
+  End With
+  'Set Item Options frame default dims.
+  With Me.fraItemOptions
+    .Height = 337.5
+    .Width = 108.75
+  End With
+  'Clear floating controls.
+  With Me
+    .cboCategories = ""
+    .txtCategoryFloating = ""
+    .txtItemFloating = ""
+    .txtDescriptionFloating = ""
+  End With
+  'Disable/hide floating frame.
+  With Me.fraFloating
+    .Enabled = False
+    .Visible = False
+  End With
+  'Position all control within userform.
+  With Me
+    .inkPreview.Left = .fraItemOptions.Left + .fraItemOptions.Width + 11.25
+    .lblLibraryItemContent.Left = .inkPreview.Left + 3.75
+    .lblDescription.Left = .inkPreview.Left
+    .lblBBDescription.Left = .inkPreview.Left
+    .cmdInsertContent.Left = .lblBBDescription.Left + .lblBBDescription.Width - .cmdInsertContent.Width
+    .cmdCloseLibrary.Left = .cmdInsertContent.Left - .cmdCloseLibrary.Width - 5
+  End With
+  'Position all controls within Item Options frame (fraItemOptions).
+  With Me
+    .cmdEditItem.Top = .cboCategories.Top + .cboCategories.Height + 19.3
+    .cmdDeleteItem.Top = .cmdEditItem.Top + .cmdEditItem.Height + 19.3
+    .cmdSaveSelection.Top = .cmdDeleteItem.Top + .cmdDeleteItem.Height + 19.3
+  End With
+  'Reset variable.
+  m_bSkipDropDownListClick = False
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub BuildBBTree()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to build the treeview from all stored Building Blocks within
+'the chosen Building Block gallery of this global template.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oNode As clsNode
+Dim oCategory As Word.Category
+Dim oBB As Word.BuildingBlock
+Dim lngCategory As Long
+Dim lngBB As Long
+  'Clear the existing entries in the TreeView
+  BBTree.NodesClear
+  'Ensure Library content is available.
+  If LibraryIsEmpty Then ConfigureUF_LibraryEmpty: Exit Sub
+  If p_oTemplate Is Nothing Then GrabTemplate
+  With p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL)
+    'Add all Category root nodes to tree.
+    For lngCategory = 1 To .Categories.Count
+      Set oCategory = .Categories(lngCategory)
+      If Not CategoryEmpty(p_clngGalleryTypeL, oCategory.Name) Then
+        'Add category root node.
+        Set oNode = BBTree.AddRoot(sKey:=oCategory.Name, vCaption:=oCategory.Name, vImageMain:="FolderClosed", vImageExpanded:="FolderOpen")
+        'Set root properties.
+        With oNode
+          .Expanded = False
+          .Tag = "Category"
+        End With
+        'Add all BB nodes to tree.
+        For lngBB = 1 To oCategory.BuildingBlocks.Count
+          Set oBB = oCategory.BuildingBlocks.Item(lngBB)
+          oNode.AddChild sKey:=oNode.Key & " " & csSep & " " & oBB.Name, vCaption:=oBB.Name, vImageMain:="NOTE04"
+        Next lngBB
+      End If
+    Next lngCategory
+  End With
+  'Build the tree.
+  BBTree.Refresh
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub BBTree_Click(cNode As clsNode)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to display the content of the selected node (Building Block).
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Category nodes don't hold content.
+  If cNode.Tag = "Category" Then
+    'Ensure Category exists.
+    If CategoryEmpty(p_clngGalleryTypeL, cNode.Caption) Then BB_Or_BBCategory_NotFound: Exit Sub
+    ClearPreview
+  Else
+    'Ensure Building Block exists.
+    If Not BuildingBlockExists(p_clngGalleryTypeL, cNode.ParentNode.Caption, cNode.Caption) Then BB_Or_BBCategory_NotFound: Exit Sub
+    'Show a preview of Building Block content.
+    Preview cNode.ParentNode.Caption, cNode.Caption
+  End If
+  m_bNodeSelected = True
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cboCategories_DropButtonClick()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to populate the category combobox (cboCategories) with all current
+'Building Block Category names. cboCategories is used when attempting to move an
+'existing Building Block to another BB category.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cNode As clsNode
+  With Me.cboCategories
+    If m_bSkipDropDownClick = True Then
+      '''''''''''''''''''''''''''''''''''''''''''''''
+      'This event has been fired immediately after a
+      'click event. Skip the remaining procedure.
+      '''''''''''''''''''''''''''''''''''''''''''''''
+      If .ListIndex <> .ListCount - 1 Then .Clear
+      m_bSkipDropDownClick = False
+      Exit Sub
+    End If
+  End With
+  Set cNode = BBTree.ActiveNode
+  If cNode.Tag = "Category" Or m_bNodeSelected = False Then
+    MsgBox "Select an item first." & vbCr & vbCr & _
+           "Note: Category folders can't be moved.", vbOKOnly + vbInformation, "No item selected"
+    Me.cboCategories.Clear
+    m_bSkipDropDownClick = True
+    Exit Sub
+  End If
+  'Populate combobox with Building Block Categories.
+  PopulateCombobox ("cboCategories")
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cboCategories_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to take action based on the list item selected within the Move Item ComboBox (cboCategories).
+'Each combobox list item represents a Building Block Category, the final list item gives the option to add the
+'selected Building Block (selected node) to a new Building Block category.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If m_bSkipDropDownListClick Then Exit Sub
+  With Me.cboCategories
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'The drop button click event is fired immediately after the
+    'click event - this is unecessary for my purposes, skip it.
+    m_bSkipDropDownClick = True
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If .ListIndex <> 0 Then
+      'Existing category.
+      m_sLibraryAction = "MoveItemToExistingCategory"
+      MoveBBItemToExistingCategory
+    Else
+      'New category was selected.
+      'Show the floating controls.
+      ShowFloatingControls "Move"
+      Me.txtCategoryFloating.SetFocus
+    End If
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdEditItem_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to allow editing of the currently selected node name and associated Building Block name
+'and description. Category node names (Building Block category names) cannot be edited. The selected node
+'name is copied into the floating control (txtItemFloating) for editing.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cNode As clsNode
+Dim sCategory As String
+Dim sBBName As String
+Dim sDescription As String
+  'Get the active node.
+  Set cNode = BBTree.ActiveNode
+  'Ensure a BB node is selected.
+  If cNode.Tag = "Category" Or m_bNodeSelected = False Then
+    MsgBox "Select an item first." & vbCr & vbCr & _
+           "Note: Category folders can't be edited.", vbOKOnly + vbInformation, "No item selected"
+    Exit Sub
+  End If
+  'Get the category name of the selected node.
+  sCategory = cNode.ParentNode.Caption
+  'Get the Building Block name of the selected node.
+  sBBName = cNode.Caption
+  'Get the BB description if available.
+  sDescription = Me.lblBBDescription.Caption
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure that the Building Block to be edited, exists. Although the existence of the Building
+  'Block is confirmed in BBTree_Click, the user could possibly delete the building block after
+  'BBTree_Click but before cmdEditItem_Click. Double check to ensure.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If Not BuildingBlockExists(p_clngGalleryTypeL, sCategory, sBBName) Then BB_Or_BBCategory_NotFound: Exit Sub
+  'Show floating controls.
+  ShowFloatingControls "Edit"
+  'Copy BB description into floating textbox.
+  Me.txtDescriptionFloating.Value = sDescription
+  'Copy list item name into floating textbox.
+  With Me.txtItemFloating
+    .Value = sBBName
+    .SetFocus
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdDeleteItem_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to identify the type of node selected (BB or BB Category), then display the
+'floating controls to allow the selected node to be deleted.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cNode As clsNode
+Dim sResp As String
+
+  'Ensure a node is selected.
+  If m_bNodeSelected = False Then
+    MsgBox "Select an item first.", vbOKOnly + vbInformation, "No item selected"
+    Exit Sub
+  End If
+  'Get the selected node.
+  Set cNode = BBTree.ActiveNode
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Tag the floating label. The .Tag will be used in ConfigureFloatingFrame
+  'to display the appropriate caption.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If cNode.Tag = "Category" Then
+    sResp = MsgBox("Do you want to delete the entire Library category? All items in this category will be deleted. " & _
+                   "This action cannot be undone." & vbCr & vbCr & "Click Yes to delete or No to cancel.", vbYesNo + vbExclamation + vbDefaultButton2, _
+                   "Warning - Delete Category?")
+    Select Case sResp
+      Case vbYes
+        DeleteBBItemOrCategory
+        Exit Sub
+      Case vbNo
+        Exit Sub
+    End Select
+  Else
+    'Show floating controls.
+    ShowFloatingControls "Delete"
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdSaveSelection_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to display the save selection options via the floating controls.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure a valid selection.
+  If Selection.Type = 0 Or Selection.Type = 1 Then
+    MsgBox "Select content in the document.", vbOKOnly + vbInformation, "No content selected"
+    Exit Sub
+  End If
+  'Show floating controls.
+  ShowFloatingControls "Save"
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cboFloating_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to take action based on the list item selected within the floating
+'ComboBox (cboFloating). The floating combobox is displayed when the user clicks the
+''Save selection' command button. Its purpose is to display all possible locations
+'available to save the current document selection.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Determine which item the user has selected from the floating combobox.
+  'Selection can be either: 1. An existing category or 2. New category.
+  With Me.cboFloating
+    Select Case .ListIndex
+      Case 0
+        'New category chosen.
+        ShowFloatingControls "SaveToNew"
+        Me.txtCategoryFloating.SetFocus
+      Case Else
+        'Existing category chosen.
+        ShowFloatingControls "SaveToExisting"
+        Me.txtItemFloating.SetFocus
+    End Select
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdOverwrite_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'cmdOverwrite is only enabled when a BB node is selected.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cNode As clsNode
+Dim oBB As Word.BuildingBlock
+Dim oRngContent As Word.Range
+Dim oRng As Word.Range
+Dim oRngSel As Word.Range
+Dim sBBCategory As String
+Dim sBBName As String
+Dim sBBDescription As String
+Dim sResp As String
+Dim sMsg As String
+Dim bFailedToRestoreBB As Boolean
+
+  'Ensure a valid selection.
+  If Selection.Type = 0 Or Selection.Type = 1 Then
+    MsgBox "Select content in the document.", vbOKOnly + vbInformation, "No content selected"
+    Exit Sub
+  End If
+  
+  'Get the current BB node and the document selection (to restore).
+  Set cNode = BBTree.ActiveNode
+  Set oRngSel = Selection.Range
+  
+  'Get the selected Building Block.
+  If p_oTemplate Is Nothing Then GrabTemplate
+  Set oBB = p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL).Categories(cNode.ParentNode.Caption).BuildingBlocks(cNode.Caption)
+  
+  'Get selected BB name, category and description.
+  With oBB
+    sBBName = .Name
+    sBBCategory = .Category.Name
+    sBBDescription = .Description
+  End With
+  
+  'Confirm overwrite.
+  sResp = MsgBox("The content of the currently selected Library item will be permanently overwritten." & vbCr & vbCr & _
+                 "Selected item:   " & oBB.Name & vbCr & vbCr & _
+                 "Do you wish to overwrite content?", vbYesNo + vbInformation, "Overwrite existing content")
+  If sResp <> vbYes Then Exit Sub
+  
+  'Use while working with only template open.
+'  Set oRngContent = Selection.Range
+'  Selection.Collapse wdCollapseStart
+'  ThisDocument.Paragraphs.Add
+'  Set oRng = ThisDocument.Range.Paragraphs.Last.Range
+'  oRng.End = oRng.End - 1
+'  Set oRng = oBB.Insert(oRng)
+'  oRngContent.Select
+
+  'Create a scratch range in the add-in template to insert the
+  'selected Building Block in case we have to restore it.
+  ThisDocument.Range.Delete
+  Set oRng = ThisDocument.Range
+  oRng.End = oRng.End - 1
+  Set oRng = oBB.Insert(oRng)
+  
+  '''''''''''''''''''''''
+  'Overwrite selected BB.
+  '''''''''''''''''''''''
+  
+  'Delete the original BB.
+  oBB.Delete
+  
+  'Save the newly defined BB.
+  If fcnSaveBuildingBlock(Selection.Range, p_clngGalleryTypeL, sBBCategory, sBBName, sBBDescription) = False Then
+  'If fcnSaveBuildingBlock(oRng, sBBCategory, sBBName, sBBDescription) = False Then
+    
+    'Failed to save the current selection as a new Building Block.
+    'Try to restore the original BB.
+    If fcnSaveBuildingBlock(oRng, p_clngGalleryTypeL, sBBCategory, sBBName, sBBDescription) = False Then
+      bFailedToRestoreBB = True
+    End If
+    
+    If bFailedToRestoreBB Then
+      'Restore failed.
+      MsgBox "An error occurred while trying to overwrite the existing Library item. The selected item has been lost.", vbOKOnly + vbCritical, "Library Error - Failed to overwrite"
+      BBTree.NodeRemove cNode
+      'If the category root node is now empty, remove it.
+      If cNode.ParentNode.GetChild(-1) Is Nothing Then BBTree.NodeRemove cNode.ParentNode
+      BBTree.Refresh
+      m_bNodeSelected = False
+      ClearPreview
+      GoTo lbl_Exit
+    Else
+      'Restore successful.
+      MsgBox "An error occurred while trying to overwrite the existing Library item. Please try again.", vbOKOnly + vbInformation, "Library Error - Failed to overwrite"
+      ThisDocument.Range.Delete
+      Me.cmdOverwrite.SetFocus
+      Exit Sub
+    End If
+  End If
+  
+  'Show new content in preview.
+  Preview sBBCategory, sBBName
+  
+  'Restore selection.
+  oRngSel.Select
+
+lbl_Exit:
+  RestoreUserformToDefault
+  Me.cmdSaveSelection.SetFocus
+  Exit Sub
+End Sub
+
+Private Sub cmdOKFloating_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'The floating OK command button is multi-purpose and is used to confirm various seperate
+'actions depending on what the user has chosen to do within fraItemOptions. The action to
+'be confirmed is defined by m_LibraryAction.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Select Case m_sLibraryAction
+    Case "MoveItemToNewCategory"
+      MoveBBItemToNewCategory
+    Case "EditItem"
+      EditBBItem
+    Case "DeleteItemOrCategory"
+      DeleteBBItemOrCategory
+    Case "SaveToExistingCategory"
+      'Re-confirm that a valid selection exists. Since the form is modeless, the user could click "Save selection..."
+      'with a valid selection, but then alter the selection prior to cmdOKFloating_Click.
+      If Selection.Type = 0 Or Selection.Type = 1 Then
+        MsgBox "Select content in the document.", vbOKOnly + vbInformation, "No content selected"
+        Exit Sub
+      End If
+      SaveBBToExistingCategory
+    Case "SaveToNewCategory"
+      'As above.
+      If Selection.Type = 0 Or Selection.Type = 1 Then
+        MsgBox "Select content in the document.", vbOKOnly + vbInformation, "No content selected"
+        Exit Sub
+      End If
+      SaveBBToNewCategory
+  End Select
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdCancelFloating_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to cancel the current action and return the userform to default.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  RestoreUserformToDefault
+  If m_bLibraryEmpty Then ConfigureUF_LibraryEmpty
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdInsertContent_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to insert the Building Block content of the currently selected BB node.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cNode As clsNode
+Dim sCategory As String
+Dim sBBName As String
+  'Get the active node.
+  Set cNode = BBTree.ActiveNode
+  'Ensure a BB node is selected.
+  If cNode.Tag = "Category" Or m_bNodeSelected = False Then
+    MsgBox "Select an item first" & vbCr & vbCr & _
+           "Note: Category folders can't be inserted.", vbOKOnly + vbInformation, "No item selected"
+    Exit Sub
+  End If
+  'Get the category name of the selected BB node.
+  sCategory = cNode.ParentNode.Caption
+  'Get the name of the selected BB node.
+  sBBName = cNode.Caption
+  'Ensure Building Block exists.
+  If Not BuildingBlockExists(p_clngGalleryTypeL, sCategory, sBBName) Then BB_Or_BBCategory_NotFound: Exit Sub
+  'Insert the Building Block.
+  If fcnInsertBuildingBlock(p_clngGalleryTypeL, sCategory, sBBName) = False Then
+    MsgBox "An error occurred while trying to insert content into the document." & vbCr & vbCr & _
+           "This can occur if the selection covers a locked Content Control " & _
+           "or if no document window is open.", vbOKOnly + vbInformation, "Library Error - Insert BB"
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub txtItemFloating_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+'32 characters max.
+  If Len(txtItemFloating.Value) = txtItemFloating.MaxLength Then Beep
+End Sub
+
+Private Sub txtCategoryFloating_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+'64 characters max.
+  If Len(txtCategoryFloating.Value) = txtCategoryFloating.MaxLength Then Beep
+End Sub
+
+Private Sub txtDescriptionFloating_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+'256 characters max.
+  If Len(txtDescriptionFloating.Value) = txtDescriptionFloating.MaxLength Then Beep
+End Sub
+
+Private Sub lblCloseAll_Click()
+  BuildBBTree
+  m_bNodeSelected = False
+End Sub
+
+Private Sub cmdCloseLibrary_Click()
+  Unload Me
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+  'UpdateTemplate
+  'ThisDocument.Save
+  'ThisDocument.Saved = True
+End Sub
+
+Sub ShowFloatingControls(sAction As String)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'The floating controls are a set of hidden controls on the userform which are displayed to the user in various different locations
+'depending on the action taken within fraItemOptions. These controls are used to gather input from the user and confirm/validate library
+'actions. The purpose of this procedure is to configure & move the floating controls into the correct postion on the userform. The
+'configuration and postion of the floating controls is defined by parameter sAction. SAction can take one of six string values: Move,
+'Edit, Delete, Save, SaveToExisting and SaveToNew. Each string value defines a certain configuration of the floating controls and position
+'of the floating frame which contains them.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCtrl As MSForms.Control
+Dim arr(1) As String
+  
+  'Disable all controls.
+  arr(0) = "fraItemOptions"
+  arr(1) = "cmdCloseLibrary"
+  EnableControls Me, False, arr()
+  'Expand the userform and fraItemOption to accomodate the floating frame.
+  ExpandUserform sAction
+  With Me
+    Select Case sAction
+      Case "Move"
+        'Get the control associated with the action. oCtrl will be
+        'used to position the floating frame in the correct postion.
+        Set oCtrl = .cboCategories
+        'Configure the floating frame based on the action.
+        ConfigureFloatingFrame "Move"
+        'Position the floating frame in relation to oCtrl.
+        PositionFloatingFrame oCtrl
+        'Position permanent controls in relation to floating frame.
+        .cmdEditItem.Top = .fraFloating.Top + .fraFloating.Height + 11.8 '19.3
+        .cmdDeleteItem.Top = .cmdEditItem.Top + .cmdEditItem.Height + 11.8 '19.3
+        .cmdSaveSelection.Top = .cmdDeleteItem.Top + .cmdDeleteItem.Height + 11.8 '19.3
+      Case "Edit"
+        Set oCtrl = .cmdEditItem
+        ConfigureFloatingFrame "Edit"
+        PositionFloatingFrame oCtrl
+        .cmdDeleteItem.Top = .fraFloating.Top + .fraFloating.Height + 11.8 '19.3
+        .cmdSaveSelection.Top = .cmdDeleteItem.Top + .cmdDeleteItem.Height + 11.8 '19.3
+      Case "Delete"
+        Set oCtrl = .cmdDeleteItem
+        ConfigureFloatingFrame "Delete"
+        PositionFloatingFrame oCtrl
+        .cmdSaveSelection.Top = .fraFloating.Top + .fraFloating.Height + 11.8 '19.3
+      Case "Save"
+        Set oCtrl = .cmdSaveSelection
+        ConfigureFloatingFrame "Save"
+        PositionFloatingFrame oCtrl
+      Case "SaveToExisting"
+        Set oCtrl = .cmdSaveSelection
+        .cmdEditItem.Top = .cboCategories.Top + .cboCategories.Height + 11.8 '13
+        .cmdDeleteItem.Top = .cmdEditItem.Top + .cmdEditItem.Height + 11.8 '13
+        .cmdSaveSelection.Top = .cmdDeleteItem.Top + .cmdDeleteItem.Height + 11.8 '13
+        ConfigureFloatingFrame "SaveToExisting"
+        PositionFloatingFrame oCtrl
+      Case "SaveToNew"
+        Set oCtrl = .cmdSaveSelection
+        .cmdEditItem.Top = .cboCategories.Top + .cboCategories.Height + 11.8 '7
+        .cmdDeleteItem.Top = .cmdEditItem.Top + .cmdEditItem.Height + 11.8 '7
+        .cmdSaveSelection.Top = .cmdDeleteItem.Top + .cmdDeleteItem.Height + 11.8 '7
+        ConfigureFloatingFrame "SaveToNew"
+        PositionFloatingFrame oCtrl
+    End Select
+    With .cmdCancelFloating
+      .Default = True
+      .SetFocus
+    End With
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub ConfigureFloatingFrame(sAction As String)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to configure the floating frame based on the action taken
+'Actions can be: Move, Edit, Delete, Save, SaveToExisting and SaveToNew.
+'
+' Parameter:
+' ----------
+' sAction   The type of action (Move, Edit, Delete, Save, SaveToExisting and SaveToNew).
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cNode As clsNode
+  'Initially enable and display all floating controls within the floating frame.
+  EnableFloatingFrameControls
+  With Me
+    'Reconfigure the frame controls based on action being taken.
+    Select Case sAction
+      Case "Move"
+        'Disable all floating controls which aren't required for this particular action.
+        With .cboFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl2Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl3Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl4Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .txtItemFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .txtDescriptionFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .cmdOverwrite
+          .Enabled = False
+          .Visible = False
+        End With
+        'Set any captions.
+        With .lbl1Floating
+          .Top = 0
+          .Caption = "Enter new category name then click OK:"
+        End With
+        'Reconfigure the floating frame controls which are being used.
+        .txtCategoryFloating.Top = .lbl1Floating.Top + .lbl1Floating.Height + 3.75
+        .cmdOKFloating.Top = .txtCategoryFloating.Top + .txtCategoryFloating.Height + 3.75
+        .cmdCancelFloating.Top = .cmdOKFloating.Top
+        .fraFloating.Height = .cmdOKFloating.Top + .cmdOKFloating.Height + 3.75
+        'Define Library Action for cmdOKFloating_Click event.
+        m_sLibraryAction = "MoveItemToNewCategory"
+      Case "Edit"
+        'Disable all floating controls which aren't required for this particular action.
+        With .cboFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl3Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl4Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .txtCategoryFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .cmdOverwrite
+          .Enabled = False
+          .Visible = False
+        End With
+        'Set any captions.
+        With .lbl1Floating
+          .Top = 0
+          .Caption = "Edit item name then click OK:"
+        End With
+        .lbl2Floating.Caption = "Description (optional)."
+        'Reconfigure the floating frame controls which are being used.
+        .txtItemFloating.Top = .lbl1Floating.Top + .lbl1Floating.Height + 3.75
+        .lbl2Floating.Top = .txtItemFloating.Top + .txtItemFloating.Height + 3.75
+        .txtDescriptionFloating.Top = .lbl2Floating.Top + .lbl2Floating.Height + 3.75
+        .cmdOKFloating.Top = .txtDescriptionFloating.Top + .txtDescriptionFloating.Height + 3.75
+        .cmdCancelFloating.Top = .cmdOKFloating.Top
+        .fraFloating.Height = .cmdOKFloating.Top + .cmdOKFloating.Height + 3.75
+        'Define Library Action for cmdOKFloating_Click event.
+        m_sLibraryAction = "EditItem"
+      
+      Case "Delete"
+        'Disable all floating controls which aren't required for this particular action.
+        With .cboFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .txtCategoryFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .txtItemFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .txtDescriptionFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl2Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl3Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl4Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .cmdOverwrite
+          .Enabled = False
+          .Visible = False
+        End With
+        'Set any captions and define Library Action.
+        With .lbl1Floating
+          .Top = 0
+          .Caption = "Delete item? This cannot be undone."
+        End With
+        'Reconfigure the floating frame controls which are being used.
+        .cmdOKFloating.Top = .lbl1Floating.Top + .lbl1Floating.Height + 3.75
+        .cmdCancelFloating.Top = .cmdOKFloating.Top
+        .fraFloating.Height = .cmdOKFloating.Top + .cmdOKFloating.Height + 3.75
+        'Define Library Action for cmdOKFloating_Click event.
+        m_sLibraryAction = "DeleteItemOrCategory"
+        
+      Case "Save"
+        'Disable all floating controls which aren't required for this particular action.
+        With .txtCategoryFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .txtItemFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .txtDescriptionFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl2Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl3Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl4Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .cmdOKFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        'Disable cmdOverwrite if category node is selected.
+        If m_bNodeSelected Then
+          Set cNode = BBTree.ActiveNode
+          If cNode.Tag = "Category" Then .cmdOverwrite.Enabled = False
+        Else
+          .cmdOverwrite.Enabled = False
+        End If
+        With .cmdOverwrite
+          .Top = 19.3
+          .Left = 0
+        End With
+        'Reconfigure the floating frame controls which are being used.
+        With .lbl1Floating
+          .Top = Me.cmdOverwrite.Top + Me.cmdOverwrite.Height + 19.3
+          
+          If Me.cmdOverwrite.Enabled = True Then
+            .Caption = "OR, select a category to save the selection:"
+          Else
+            .Caption = "Select a category to save the selection:"
+          End If
+        End With
+        .cboFloating.Top = .lbl1Floating.Top + .lbl1Floating.Height + 3.75
+        .cboFloating.Clear
+        .cmdCancelFloating.Top = .cboFloating.Top + .cboFloating.Height + 3.75
+        .fraFloating.Height = .cmdCancelFloating.Top + .cmdCancelFloating.Height + 3.75
+        PopulateCombobox "cboFloating"
+        'Define Library Action.
+        m_sLibraryAction = "Save"
+      Case "SaveToExisting"
+        'Disable all floating controls which aren't required for this particular action.
+        With .txtCategoryFloating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .lbl4Floating
+          .Enabled = False
+          .Visible = False
+        End With
+        With .cmdOverwrite
+          .Enabled = False
+          .Visible = False
+        End With
+        .cboFloating.Enabled = False
+        'Reconfigure the floating frame controls which are being used.
+        With .lbl1Floating
+          .Top = 0
+          .Caption = "Select a category to save the selection:"
+        End With
+        .cboFloating.Top = .lbl1Floating.Top + .lbl1Floating.Height + 3.75
+        With .lbl2Floating
+          .Top = Me.cboFloating.Top + Me.cboFloating.Height + 3.75
+          .Caption = "Enter item name then click OK:"
+        End With
+        .txtItemFloating.Top = .lbl2Floating.Top + .lbl2Floating.Height + 3.75
+        With .lbl3Floating
+          .Top = Me.txtItemFloating.Top + Me.txtItemFloating.Height + 3.75
+          .Caption = "Description (optional):"
+        End With
+        .txtDescriptionFloating.Top = .lbl3Floating.Top + .lbl3Floating.Height + 3.75
+        .cmdOKFloating.Top = .txtDescriptionFloating.Top + .txtDescriptionFloating.Height + 3.75
+        .cmdCancelFloating.Top = .cmdOKFloating.Top
+        .fraFloating.Height = .cmdOKFloating.Top + .cmdOKFloating.Height + 3.75
+        'Define Library Action for cmdOKFloating_Click event.
+        m_sLibraryAction = "SaveToExistingCategory"
+      Case "SaveToNew"
+        With .cmdOverwrite
+          .Enabled = False
+          .Visible = False
+        End With
+        'Reconfigure the floating frame controls which are being used.
+        With .lbl1Floating
+          .Top = 0
+          .Caption = "Select a category to save the selection."
+        End With
+        .cboFloating.Enabled = False
+        .cboFloating.Top = .lbl1Floating.Top + .lbl1Floating.Height + 3.75
+        With .lbl2Floating
+          .Top = Me.cboFloating.Top + Me.cboFloating.Height + 3.75
+          .Caption = "Enter new category name:"
+        End With
+        .txtCategoryFloating.Top = .lbl2Floating.Top + .lbl2Floating.Height + 3.75
+        With .lbl3Floating
+          .Top = Me.txtCategoryFloating.Top + Me.txtCategoryFloating.Height + 3.75
+          .Caption = "Enter new item name:"
+        End With
+        .txtItemFloating.Top = .lbl3Floating.Top + .lbl3Floating.Height + 3.75
+        With .lbl4Floating
+          .Top = Me.txtItemFloating.Top + Me.txtItemFloating.Height + 3.75
+          .Caption = "Description (optional):"
+        End With
+        .txtDescriptionFloating.Top = .lbl4Floating.Top + .lbl4Floating.Height + 3.75
+        .cmdOKFloating.Top = .txtDescriptionFloating.Top + .txtDescriptionFloating.Height + 3.75
+        .cmdCancelFloating.Top = .cmdOKFloating.Top
+        .fraFloating.Height = .cmdOKFloating.Top + .cmdOKFloating.Height + 3.75
+        'Define Library Action for cmdOKFloating_Click event.
+        m_sLibraryAction = "SaveToNewCategory"
+    End Select
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub EnableFloatingFrameControls()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to enable all controls contained within the floating frame fraFloating.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me
+  With .fraFloating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .txtCategoryFloating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .txtItemFloating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .txtDescriptionFloating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .cboFloating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .lbl1Floating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .lbl2Floating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .lbl3Floating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .lbl4Floating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .cmdOverwrite
+    .Enabled = True
+    .Visible = True
+  End With
+  With .cmdOKFloating
+    .Enabled = True
+    .Visible = True
+  End With
+  With .cmdCancelFloating
+    .Enabled = True
+    .Visible = True
+  End With
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub PositionFloatingFrame(oCtrl As MSForms.Control)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to position the floating frame (fraFloating) in realtion to the passed control oCtrl.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me.fraFloating
+    .Top = oCtrl.Top + oCtrl.Height + 5
+    .ZOrder (0)
+  End With
+End Sub
+
+Sub PopulateCombobox(sComboName As String)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to populate a combobox with all the currently existing Building Block
+'Category names contained within the chosen Building Block Gallery. The name of
+'the combobox to be populated is sComboName
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCategory As Word.Category
+Dim oCombo As MSForms.ComboBox
+Dim i As Long
+  Set oCombo = Me.Controls(sComboName)
+  oCombo.Clear
+  If p_oTemplate Is Nothing Then GrabTemplate
+  'Add all current categories to combobox.
+  With p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL)
+  For i = 1 To p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL).Categories.Count
+    Set oCategory = .Categories(i)
+    If CategoryEmpty(p_clngGalleryTypeL, oCategory.Name) Then GoTo NextCategory
+    oCombo.AddItem oCategory.Name
+NextCategory:
+  Next i
+  End With
+  'Add final combobox item.
+  oCombo.AddItem "*********  NEW CATEGORY  *********", 0
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub Preview(CategoryName As String, BuildingBlockName As String)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to preview Building Block content in the inkPreview control.
+'This procedure has had input from both Greg Maxey and myself.
+'
+' Parameters:
+' -----------
+' CategoryName        The category name of the Building Block we want to preview.
+' BuildingBlockName   The name of the Building Block we want to preview.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oBB As Word.BuildingBlock
+Dim oRngSel As Word.Range
+Dim oRng As Range
+Dim strAlert As String
+Dim i As Long
+Dim bPasteAgain As Boolean
+Dim bContainsSpecFields As Boolean 'MacroButton, Barcode, Goto Button, Private, RD, TA, TC, XE.
+Dim bContainsShapes As Boolean
+Dim bSuppressPreview As Boolean
+Dim bClipboardWasEmpty As Boolean
+
+  bSuppressPreview = False
+  bContainsSpecFields = False
+  
+  strAlert = vbCr & vbCr & vbCr & vbCr & vbCr & _
+         vbTab & vbTab & "The selected Library item cannot be previewed. " & vbCr & vbCr & _
+         vbTab & vbTab & "A preview of certain items containing one or more high resolution " & vbCr & _
+         vbTab & vbTab & "photographs, certain full-page (cover page) building blocks with " & vbCr & _
+         vbTab & vbTab & "complex graphics, content containing certain underlying field codes, " & vbCr & _
+         vbTab & vbTab & "and items where the content size exceeds a set limit cannot be previewed." & vbCr & vbCr & _
+         vbTab & vbTab & "The Description property can be used to create a detailed " & vbCr & _
+         vbTab & vbTab & "description of any Library items that cannot be previewed."
+  
+  'Get the current document selection in order to restore it.
+  Set oRngSel = Selection.Range
+
+  If p_oTemplate Is Nothing Then GrabTemplate
+  
+  'Get the Building Block. Assume Building Block exists as per lstLibraryItems_Click.
+  Set oBB = p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL).Categories(CategoryName).BuildingBlocks(BuildingBlockName)
+  
+  #If DEBUGMODE = 1 Then
+    If Len(oBB.Value) = 0 Then
+      MsgBox "Preview procedure:" & vbCr & vbCr & _
+             oBB.Name & ": " & "Len(oBB.Value) is 0. This will now cause an error when trying to cut."
+      Stop
+      'BB_Or_BBCategory_NotFound
+      Exit Sub
+    End If
+  #End If
+  
+  Application.ScreenUpdating = False
+  
+  'Use the template as a scratch range.
+  Set oRng = ThisDocument.Range
+  oRng.Delete                                         '##### Undo 1 #####
+  'Add an insert range to store users last cut item.
+  ThisDocument.Paragraphs.Add                         '##### Undo 2 #####
+  'Add a BB insert range.
+  ThisDocument.Paragraphs.Add                         '##### Undo 3 #####
+  'The Preview feature uses the clipboard so the user's last cut or copied content can be lost.
+  'Paste the user's current clipboard content.
+  Set oRng = ThisDocument.Paragraphs(1).Range
+  On Error Resume Next
+  oRng.Paste                                          'Will fail in clipboard is empty.
+  'Error 4605 for empty clipboard. We can handle unexpected errors in the same way.
+  If Err.Number <> 0 Then bClipboardWasEmpty = True
+  On Error GoTo 0
+  'Insert BB content into template range.
+  Set oRng = ThisDocument.Paragraphs.Last.Range
+  oBB.Insert oRng                                     '##### Undo 4 #####
+  
+  'Test for shapes
+  If oRng.ShapeRange.Count > 0 Then bContainsShapes = True
+  
+  'Test for special fields.
+  If oRng.Fields.Count > 0 Then
+    For i = 1 To oRng.Fields.Count
+      With oRng.Fields(i)
+        If .Type = wdFieldMacroButton Or .Type = wdFieldBarCode Or .Type = wdFieldGoToButton _
+        Or .Type = wdFieldPrivate Or .Type = wdFieldRefDoc Or .Type = wdFieldCitation Then
+        bContainsSpecFields = True
+        Exit For
+        End If
+      End With
+    Next
+  End If
+  
+  'Test for large/complex content:
+  'Very large content e.g., pictures simply can't be previewed. It locks up Word.
+  If Len(oRng.XML) > 500000 Then bSuppressPreview = True
+  'Cut the user's BB content from template.
+  oRng.Cut                                            '##### Undo 5 #####
+  With inkPreview
+    
+    .Locked = False
+    .Text = vbNullString
+    
+    If Not bSuppressPreview Then
+PasteAgain:
+
+      .Text = vbNullString
+      SendMessage .hWnd, WM_PASTE, 0&, 0&
+      
+      If Len(.Text) < 3 Then
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'It is possible that the paste command failed. If this occurs then the content may still be previewed
+        'if we try again. When paste fails, there seems to be blank content placed in the inkEdit control which takes
+        'up the same amount of physical space as the pasted content would have (even although Len(.Text) < 3). This
+        'means that if the actual content is eventually pasted, it will be placed part way down the inkEdit control
+        '(after the invisible content); this is the reason for the additional .Text = vbNullString (above).
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        #If DEBUGMODE = 1 Then
+          Stop
+        #End If
+        'Try to paste content again.
+        If bPasteAgain = False Then bPasteAgain = True: GoTo PasteAgain
+        'Paste has failed twice.
+        .Text = strAlert
+        GoTo PasteFail
+      End If
+      
+      If bContainsShapes And Not bContainsSpecFields Then
+        
+        .Text = .Text & vbCr + vbCr & _
+         "    _______________________________________________________________________________" & vbCr & _
+         vbTab & vbTab & "Note: The selected Library item contains one or more shapes." & vbCr & _
+         vbTab & vbTab & "Shapes are not displayed in the preview but will be inserted correctly." & vbCr & _
+         vbTab & vbTab & "A description can be used for items which don't preview correctly."
+         
+      ElseIf bContainsSpecFields And Not bContainsShapes Then
+      
+        .Text = .Text & vbCr + vbCr & _
+         "    _______________________________________________________________________________" & vbCr & _
+         vbTab & vbTab & "Note: The selected Library item contains one or more special fields. Certain " & vbCr & _
+         vbTab & vbTab & "special fields are not displayed in the preview but will be inserted correctly." & vbCr & _
+         vbTab & vbTab & "A description can be used for items which don't preview correctly."
+
+      ElseIf bContainsShapes And bContainsSpecFields Then
+      
+        .Text = .Text & vbCr + vbCr & _
+         "    _______________________________________________________________________________" & vbCr & _
+         vbTab & vbTab & "Note: The selected Library item contains one or more shapes and one or more " & vbCr & _
+         vbTab & vbTab & "special fields. Shapes and certain special fields are not displayed in the preview " & vbCr & _
+         vbTab & vbTab & "but will be inserted correctly. A description can be used for items which don't" & vbCr & _
+         vbTab & vbTab & "preview correctly."
+      
+      End If
+      
+    Else
+    
+      .Text = strAlert
+      
+    End If
+    
+PasteFail:
+
+    .Refresh
+    .Locked = True
+    
+  End With
+  'Get back the original clipboard content if available.
+  If bClipboardWasEmpty Then
+    'Undo everything by this procedure.
+    ThisDocument.undo 5
+  Else
+    'Cut the original content back to the clipboard.
+    ThisDocument.undo 2
+    Set oRng = ThisDocument.Paragraphs(1).Range
+    oRng.End = oRng.End - 1
+    'Error handling here is probably overkill.
+    On Error Resume Next
+    oRng.Cut
+    On Error GoTo 0
+  End If
+  'Show BB description.
+  lblBBDescription.Caption = oBB.Description
+  Application.ScreenUpdating = True
+  'Restore selection.
+  oRngSel.Select
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub ClearPreview()
+  With Me.inkPreview
+    .Locked = False
+    .Text = ""
+    .Locked = True
+  End With
+  Me.lblBBDescription.Caption = ""
+End Sub
+
+Sub MoveBBItemToExistingCategory()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to move a Building Block entry to another existing
+'category within the same gallery, then update the treeview.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cRoot As clsNode
+Dim cNode As clsNode
+Dim sBBCategoryOld As String
+Dim sBBCategoryNew As String
+Dim sBBName As String
+  'Get the selected BB node.
+  Set cNode = BBTree.ActiveNode
+  'Get the Category name of the selected BB node.
+  sBBCategoryOld = cNode.ParentNode.Caption
+  'Get Building Block name from selected BB node.
+  sBBName = cNode.Caption
+  'Get new Category name from combobox.
+  sBBCategoryNew = Me.cboCategories.Value
+  '=======================
+  'Validate Building Block.
+  '=======================
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure that the Building Block to be moved, exists. Although the existence of the Building
+  'Block is confirmed in BBTree_Click, the user could possibly delete the building block before
+  'clicking the floating OK command button. Double check to ensure.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If Not BuildingBlockExists(p_clngGalleryTypeL, sBBCategoryOld, sBBName) Then BB_Or_BBCategory_NotFound: Exit Sub
+  If sBBCategoryNew = sBBCategoryOld Then Me.cboCategories.Value = "": GoTo lbl_Exit
+  If Not BuildingBlockNameIsValid(sBBCategoryNew, sBBName) Then Exit Sub
+  '=======================
+  'Move the Bulding Block.
+  '=======================
+  If fcnMoveBuildingBlock(sBBName, sBBCategoryOld, sBBCategoryNew) = False Then
+    MsgBox "An error occurred while trying to move the item to an existing category. Please try again." & vbCr & vbCr & _
+           "If this error persists, close then re-open Microsoft Word. Remember to save your work. Open folders will " & _
+           "now be closed to try to resolve the problem.", vbOKOnly + vbCritical, "Library Error - Move BB to existing category"
+    GoTo err_Move
+  End If
+  ClearPreview
+  '=======================
+  'Update the treeview.
+  '=======================
+  'Get the category root node from selected BB node.
+  Set cRoot = cNode.ParentNode
+  'Remove selected BB node.
+  BBTree.NodeRemove cNode
+  'If the category root node is now empty, remove it.
+  If cRoot.GetChild(-1) Is Nothing Then BBTree.NodeRemove cRoot
+  'Add new BB node to chosen category root node (sCategoryNew).
+  BBTree.NodeAdd vRelative:=sBBCategoryNew, vRelationship:=tvChild, sKey:=sBBCategoryNew & " " & csSep & " " & sBBName, vCaption:=sBBName, vImageMain:="NOTE04"
+  'Refresh tree.
+  BBTree.Refresh
+  'After updating the treeview, no nodes will be selected/highlighted and no content will be displayed.
+  'However, there will still be an active node (BBTree.ActiveNode) which is why I have created this flag.
+  m_bNodeSelected = False
+  Me.cboCategories.SetFocus
+lbl_Exit:
+  Exit Sub
+err_Move:
+  RestoreUserformToDefault
+  BuildBBTree
+  Exit Sub
+End Sub
+
+'Procedure called by multi-purpose command button cmdOKFloating_Click
+Sub MoveBBItemToNewCategory()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to move a Building Block entry to a new category, then update the treeview.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cRoot As clsNode
+Dim cNode As clsNode
+Dim cChild As clsNode
+Dim sBBCategoryOld As String
+Dim sBBCategoryNew As String
+Dim sBBName As String
+  'Get the selected BB node.
+  Set cNode = BBTree.ActiveNode
+  'Get the Category name of the selected BB node.
+  sBBCategoryOld = cNode.ParentNode.Caption
+  'Get Building Block name from selected BB node.
+  sBBName = cNode.Caption
+  'Get new Category name.
+  sBBCategoryNew = Trim(Me.txtCategoryFloating.Value)
+  '=======================
+  'Validate Building Block.
+  '=======================
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure that the Building Block to be moved, exists. Although the existence of the Building
+  'Block is confirmed in BBTree_Click, the user could possibly delete the building block before
+  'clicking the floating OK command button. Double check to ensure.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If Not BuildingBlockExists(p_clngGalleryTypeL, sBBCategoryOld, sBBName) Then BB_Or_BBCategory_NotFound: Exit Sub
+  'Ensure the new category and BuildingBlock names are valid.
+  If Not CategoryNameIsValid(sBBCategoryNew) Then Exit Sub
+  If Not BuildingBlockNameIsValid(sBBCategoryNew, sBBName) Then Exit Sub
+  '=======================
+  'Move the Bulding Block.
+  '=======================
+  If fcnMoveBuildingBlock(sBBName, sBBCategoryOld, sBBCategoryNew) = False Then
+    MsgBox "An error occurred while trying to move the item to a new category. Please try again." & vbCr & vbCr & _
+           "If this error persists, close then re-open Microsoft Word. Remember to save your work. Open folders " & _
+           "will now be closed to try to resolve the problem.", vbOKOnly + vbCritical, "Library Error - Move BB to new category"
+    GoTo err_Move
+  End If
+  '=======================
+  'Update the treeview.
+  '=======================
+  'Get the category root node from selected BB node.
+  Set cRoot = cNode.ParentNode
+  'Remove selected BB node.
+  BBTree.NodeRemove cNode
+  'If the category root node is now empty, remove it.
+  If cRoot.GetChild(-1) Is Nothing Then BBTree.NodeRemove cRoot
+  'Add new category root node.
+  Set cRoot = BBTree.AddRoot(sKey:=sBBCategoryNew, vCaption:=sBBCategoryNew, vImageMain:="FolderClosed", vImageExpanded:="FolderOpen")
+  cRoot.Tag = "Category"
+  'Add new BB node to new category root node.
+  Set cChild = cRoot.AddChild(sKey:=sBBCategoryNew & " " & csSep & " " & sBBName, vCaption:=sBBName, vImageMain:="NOTE04")
+  'Refresh tree.
+  BBTree.Refresh
+  'Select new BB node.
+  Set BBTree.ActiveNode = cChild
+  BBTree.ScrollToView cChild, 2
+  BBTree.EnterExit False
+  '=======================
+  'Restore userform.
+  '=======================
+  RestoreUserformToDefault
+  Me.cboCategories.SetFocus
+lbl_Exit:
+  Exit Sub
+err_Move:
+  RestoreUserformToDefault
+  BuildBBTree
+  Exit Sub
+End Sub
+
+'Procedure called by multi-purpose command button cmdOKFloating_Click
+Sub EditBBItem()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to edit the name and description of a Building Block entry, then update the treeview.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cNode As clsNode
+Dim sBBCategory As String
+Dim sBBNameExisting As String
+Dim sBBNameNew As String
+Dim sBBDescription As String
+  'Get the selected BB node.
+  Set cNode = BBTree.ActiveNode
+  'Get the Category name of the selected BB node.
+  sBBCategory = cNode.ParentNode.Caption
+  'Get Building Block name from selected BB node.
+  sBBNameExisting = cNode.Caption
+  'Get new Building Block name.
+  sBBNameNew = Trim(Me.txtItemFloating.Value)
+  'Get new Building Block description if provided.
+  sBBDescription = Trim(Me.txtDescriptionFloating.Value)
+  '=======================
+  'Validate Building Block.
+  '=======================
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure that the Building Block to be edited, exists. Although the existence of the Building
+  'Block is confirmed in BBTree_Click, the user could possibly delete the building block
+  'before clicking the floating OK command button. Double check to ensure.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If Not BuildingBlockExists(p_clngGalleryTypeL, sBBCategory, sBBNameExisting) Then BB_Or_BBCategory_NotFound: Exit Sub
+  'Ensure the new BuildingBlock name is valid.
+  If sBBNameNew <> sBBNameExisting Then
+    If Not BuildingBlockNameIsValid(sBBCategory, sBBNameNew) Then Exit Sub
+  End If
+  '=======================
+  'Edit the Bulding Block.
+  '=======================
+  If fcnEditBuildingBlockNameAndDescription(sBBCategory, sBBNameExisting, sBBNameNew, sBBDescription) = False Then
+    MsgBox "An error occurred while trying to edit the item name/description." & vbCr & vbCr & _
+           "If this error persists, close then re-open Microsoft Word. Remember to save your work. Open folders " & _
+           "will now be closed to try to resolve the problem.", vbOKOnly + vbCritical, "Library Error - Edit BB name/description"
+    GoTo err_Edit
+  End If
+  'Update the BB description if provided.
+  Me.lblBBDescription.Caption = sBBDescription
+  '=======================
+  'Update the treeview.
+  '=======================
+  cNode.Caption = sBBNameNew
+  '=======================
+  'Restore userform.
+  '=======================
+  RestoreUserformToDefault
+  Me.cmdEditItem.SetFocus
+lbl_Exit:
+  Exit Sub
+err_Edit:
+  RestoreUserformToDefault
+  BuildBBTree
+  Exit Sub
+End Sub
+
+'Procedure called by multi-purpose command button cmdOKFloating_Click
+Sub DeleteBBItemOrCategory()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to delete a Building Block entry or category, then update the treeview.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cRoot As clsNode
+Dim cNode As clsNode
+Dim sBBCategory As String
+Dim sBBName As String
+  'Get the selected node.
+  Set cNode = BBTree.ActiveNode
+  'Determine if selected node is BB or category node.
+  If cNode.Tag = "Category" Then
+    'Get name of selected category root node.
+    sBBCategory = cNode.Caption
+    'Delete selected Building Block category.
+    If fcnDeleteBuildingBlockCategory(p_clngGalleryTypeL, sBBCategory) = False Then
+      MsgBox "An error occurred while trying to delete the item category." & vbCr & vbCr & _
+             "If this error persists, close then re-open Microsoft Word. Remember to save your work. Open folders " & _
+             "will now be closed to try to resolve the problem.", vbOKOnly + vbCritical, "Library Error - Delete BB category"
+      GoTo err_Delete
+    End If
+    'Delete category root node.
+    BBTree.NodeRemove cNode
+  Else
+    'Get category root node from selected BB node.
+    Set cRoot = cNode.ParentNode
+    'Get category name from selected BB node.
+    sBBCategory = cNode.ParentNode.Caption
+    'Get name of selected BB node.
+    sBBName = cNode.Caption
+    'Delete selected Building Block.
+    If fcnDeleteBuildingBlock(p_clngGalleryTypeL, sBBCategory, sBBName) = False Then
+      MsgBox "An error occurred while trying to delete the item." & vbCr & vbCr & _
+             "If this error persists, close then re-open Microsoft Word. Remember to save your work. Open folders " & _
+             "will now be closed to try to resolve the problem.", vbOKOnly + vbCritical, "Library Error - Delete BB item"
+      GoTo err_Delete
+    End If
+    'Delete selected BB node.
+    BBTree.NodeRemove cNode
+    'If the category root node is now empty, remove it.
+    If cRoot.GetChild(-1) Is Nothing Then BBTree.NodeRemove cRoot
+  End If
+  ClearPreview
+  '=======================
+  'Update the treeview.
+  '=======================
+  BBTree.Refresh
+  m_bNodeSelected = False
+  '=======================
+  'Restore userform.
+  '=======================
+  RestoreUserformToDefault
+  Me.cmdDeleteItem.SetFocus
+  If LibraryIsEmpty Then ConfigureUF_LibraryEmpty
+lbl_Exit:
+  Exit Sub
+err_Delete:
+  RestoreUserformToDefault
+  BuildBBTree
+  Exit Sub
+End Sub
+
+'Procedure called by multi-purpose command button cmdOKFloating_Click
+Sub SaveBBToExistingCategory()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to save the document selection as a new Building Block entry in an existing category, then
+'update the treeview. The Category has already been chosen via cboFloating and cboFloating has been
+'disabled. The remaining work is to validate txtItemFloating and carry out the save action.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cNode As clsNode
+Dim sBBCategory As String
+Dim sBBName As String
+Dim sBBDescription As String
+Dim i As Long, j As Long
+  'Get the Category and Building Block name & description from the floating textboxes.
+  sBBCategory = Me.cboFloating.Value
+  sBBName = Trim(Me.txtItemFloating.Value)
+  sBBDescription = Trim(Me.txtDescriptionFloating.Value)
+  '=======================
+  'Validate Building Block.
+  '=======================
+  'Ensure Building Block name is valid.
+  If Not BuildingBlockNameIsValid(sBBCategory, sBBName) Then Exit Sub
+  '=======================
+  'Save the Bulding Block.
+  '=======================
+  'Save the selection as a new building block in the existing category.
+  If fcnSaveBuildingBlock(Selection.Range, p_clngGalleryTypeL, sBBCategory, sBBName, sBBDescription) = False Then
+    MsgBox "An error occurred while trying to save the item to an existing category." & vbCr & vbCr & _
+           "If this error persists, close then re-open Microsoft Word. Remember to save your work. Open folders " & _
+           "will now be closed to try to resolve the problem.", vbOKOnly + vbCritical, "Library Error - Save BB to existing category"
+    GoTo err_Save
+  End If
+  'Show content in inkPreview.
+  Preview sBBCategory, sBBName
+  'Show the BB description if provided.
+  Me.lblBBDescription.Caption = sBBDescription
+  '=======================
+  'Update the treeview.
+  '=======================
+  'Add new BB node.
+  Set cNode = BBTree.NodeAdd(vRelative:=sBBCategory, vRelationship:=tvChild, sKey:=sBBCategory & " " & csSep & " " & sBBName, vCaption:=sBBName, vImageMain:="NOTE04")
+  'Refresh tree.
+  BBTree.Refresh
+  'Select new BB node.
+  Set BBTree.ActiveNode = cNode
+  m_bNodeSelected = True
+  BBTree.ScrollToView cNode, 2
+  BBTree.EnterExit False
+  '=======================
+  'Restore userform.
+  '=======================
+  RestoreUserformToDefault
+  Me.cmdSaveSelection.SetFocus
+lbl_Exit:
+  Exit Sub
+err_Save:
+  RestoreUserformToDefault
+  BuildBBTree
+  Exit Sub
+End Sub
+
+'Procedure called by multi-purpose command button cmdOKFloating_Click
+Sub SaveBBToNewCategory()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to save the document selection as a new Building Block
+'in a new Building Block Category, then update the treeview.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cRoot As clsNode
+Dim cChild As clsNode
+Dim sBBCategory As String
+Dim sBBName As String
+Dim sBBDescription As String
+  If m_bLibraryEmpty Then BBTree.NodesClear
+  'Get the Category and Building Block name & description from the floating textboxes.
+  sBBCategory = Trim(Me.txtCategoryFloating.Value)
+  sBBName = Trim(Me.txtItemFloating.Value)
+  '=======================
+  'Validate Building Block.
+  '=======================
+  'Ensure the new category and BuildingBlock names are valid.
+  If Not CategoryNameIsValid(sBBCategory) Then Exit Sub
+  If Not BuildingBlockNameIsValid(sBBCategory, sBBName) Then Exit Sub
+  '=======================
+  'Save the Bulding Block.
+  '=======================
+  'Save the selection as a new BB in the new category.
+  If fcnSaveBuildingBlock(Selection.Range, p_clngGalleryTypeL, sBBCategory, sBBName, sBBDescription) = False Then
+    MsgBox "An error occurred while trying to save the item to a new category" & vbCr & vbCr & _
+           "If this error persists, close then re-open Microsoft Word. Remember to save your work. Open folders " & _
+           "will now be closed to try to resolve the problem.", vbOKOnly + vbCritical, "Library Error - Save BB to new category"
+    GoTo err_Save
+  End If
+  'Show content in inkPreview.
+  Preview sBBCategory, sBBName
+  'Show the BB description if provided.
+  Me.lblBBDescription.Caption = sBBDescription
+  '=======================
+  'Update the treeview.
+  '=======================
+  'Add new category root node.
+  Set cRoot = BBTree.AddRoot(sKey:=sBBCategory, vCaption:=sBBCategory, vImageMain:="FolderClosed", vImageExpanded:="FolderOpen")
+  cRoot.Tag = "Category"
+  'Add new BB node to new category root node.
+  Set cChild = cRoot.AddChild(sKey:=sBBCategory & " " & csSep & " " & sBBName, vCaption:=sBBName, vImageMain:="NOTE04")
+  'Refresh tree.
+  BBTree.Refresh
+  'Select new BB node.
+  Set BBTree.ActiveNode = cChild
+  m_bNodeSelected = True
+  BBTree.ScrollToView cChild, 2
+  BBTree.EnterExit False
+  m_bLibraryEmpty = False
+  '=======================
+  'Restore userform.
+  '=======================
+  RestoreUserformToDefault
+  Me.cmdSaveSelection.SetFocus
+lbl_Exit:
+  Exit Sub
+err_Save:
+  RestoreUserformToDefault
+  BuildBBTree
+  Exit Sub
+End Sub
+
+Private Function CategoryNameIsValid(CategoryName As String) As Boolean
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to validate the entry in the floating Category textbox txtCategoryFloating.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me.txtCategoryFloating
+    If Len(CategoryName) = 0 Then
+      .Value = "Can't be blank."
+    ElseIf InStr(CategoryName, csSep) > 0 Then
+      .Tag = .Value
+      .Value = "Illegal value."
+    ElseIf CategoryExists(p_clngGalleryTypeL, CategoryName) Then
+      If CategoryEmpty(p_clngGalleryTypeL, CategoryName) Then
+        CategoryNameIsValid = True
+      Else
+        .Tag = .Value
+        .Value = "Category exists."
+      End If
+    ElseIf .Value = "Can't be blank." Then
+      .Value = ""
+    ElseIf .Value = "Illegal value." Then
+      .Value = .Tag
+    ElseIf .Value = "Category exists." Then
+      .Value = .Tag
+    Else
+      CategoryNameIsValid = True
+    End If
+    If Not CategoryNameIsValid Then
+      .SelStart = 0
+      .SelLength = Len(.Value)
+      .SetFocus
+    End If
+  End With
+lbl_Exit:
+  Exit Function
+End Function
+
+Private Function BuildingBlockNameIsValid(CategoryName As String, BuildingBlockName As String) As Boolean
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to validate the entry in the floating textbox txtItemFloating or the categories combobox cboCategories.
+'The action MoveItemToExistingCategory is the only action which doesn't use the floating controls. This action is
+'confirmed simply by clicking a list item within cboCategories. If the name of the Building Block item to be moved
+'already exists within the target category then the user is informed via cboCategories. That is why this procedure
+'is split into two sections: one for MoveItemToExistingCategory which doesn't use the floating controls, and one
+'for every other LibraryAction.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If m_sLibraryAction = "MoveItemToExistingCategory" Then
+    With Me.cboCategories
+      If BuildingBlockExists(p_clngGalleryTypeL, CategoryName, BuildingBlockName) Then
+        .AddItem "Name already exists."
+        m_bSkipDropDownListClick = True
+        .ListIndex = .ListCount - 1
+        m_bSkipDropDownListClick = False
+        .SelLength = Len(.Value)
+      Else
+        BuildingBlockNameIsValid = True
+      End If
+    End With
+  Else
+    With Me.txtItemFloating
+      If Len(BuildingBlockName) = 0 Then
+        .Value = "Can't be blank."
+      ElseIf InStr(BuildingBlockName, csSep) > 0 Then
+        .Tag = .Value
+        .Value = "Illegal value."
+      ElseIf BuildingBlockExists(p_clngGalleryTypeL, CategoryName, BuildingBlockName) Then
+        .Tag = .Value
+        .Value = "Name already exists."
+      ElseIf .Value = "Can't be blank." Then
+        .Value = ""
+      ElseIf .Value = "Illegal value." Then
+        .Value = .Tag
+      ElseIf .Value = "Name already exists." Then
+        .Value = .Tag
+      Else
+        BuildingBlockNameIsValid = True
+      End If
+      If Not BuildingBlockNameIsValid Then
+        .SelStart = 0
+        .SelLength = Len(.Value)
+        .SetFocus
+      End If
+    End With
+  End If
+lbl_Exit:
+  Exit Function
+End Function
+
+Function LibraryIsEmpty() As Boolean
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to determine if the user library is empty, i.e. no Building Blocks exist in the chosen Building Block Gallery.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCategory As Word.Category
+Dim i As Long
+  If p_oTemplate Is Nothing Then GrabTemplate
+  With p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL)
+    For i = 1 To .Categories.Count
+      Set oCategory = .Categories(i)
+      If CategoryEmpty(p_clngGalleryTypeL, oCategory.Name) Then
+        GoTo NextCategory
+      Else
+        Exit Function
+      End If
+NextCategory:
+    Next i
+  End With
+  m_bLibraryEmpty = True
+  LibraryIsEmpty = True
+lbl_Exit:
+  Exit Function
+End Function
+
+Sub ConfigureUF_LibraryEmpty()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to configure the userform based on an empty Library,
+'i.e. no BB categories exist within the chosen BB Gallery.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim sMsg As String
+Dim arr(3) As String
+  arr(0) = "fraItemOptions"
+  arr(1) = "cmdSaveSelection"
+  arr(2) = "cmdCloseLibrary"
+  arr(3) = "lblUserMsg"
+  sMsg = vbCr & vbCr & vbCr & vbCr & vbCr & vbCr & vbCr & _
+         vbTab & "The Library is empty. Select some content in the document and click 'Save selection...'."
+  'Clear any existing nodes in the TreeView
+  BBTree.NodesClear
+  With Me.inkPreview
+    .Locked = False
+    .Text = ""
+    .Text = sMsg
+    .Locked = True
+  End With
+  EnableControls Me, False, arr()
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub BB_Or_BBCategory_NotFound()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to display help text in the inkEdit control which alerts the user
+'that the selected building block or category doesn't exist. Categories or
+'Building Blocks which don't exist (or are empty) shouldn't be displayed in
+'the Library listbox. Assuming no errors, this procedure shouldn't be needed.
+'It may be needed if the user deletes Building Blocks while the UF is displayed.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cRoot As clsNode
+Dim sMsg As String
+  sMsg = "Error: Category or Building Block not found." & vbCr & vbCr & _
+         "This error can result from manual modification of document Building Blocks while the Library is active. " & _
+         "If this problem persists, please close then re-open Microsoft Word." & vbCr & vbCr & _
+         "The selected item or Category will now be removed from the Library item list."
+  MsgBox sMsg, vbOKOnly + vbCritical, "Library Error - BB or Category not found"
+  With BBTree
+    'Get the category root node.
+    Set cRoot = .ActiveNode.ParentNode
+    'Delete selected BB node.
+    BBTree.NodeRemove .ActiveNode
+    'If the category root node is now empty, remove it.
+    If cRoot.GetChild(-1) Is Nothing Then .NodeRemove cRoot
+    .Refresh
+    .EnterExit True
+  End With
+  ClearPreview
+  m_bNodeSelected = False
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub ExpandUserform(sAction As String)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to expand the userform to accomodate expanded fraItemOptions.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me
+    .Width = 906.75
+    If sAction = "SaveToNew" Then
+      .fraItemOptions.Height = 363.75
+    Else
+      .fraItemOptions.Height = 337.5
+    End If
+    .fraItemOptions.Width = 180
+    .lblLibraryItemContent.Left = 429.5
+    .inkPreview.Left = 429.5
+    .lblDescription.Left = .inkPreview.Left
+    .lblBBDescription.Left = .inkPreview.Left
+    .cmdCloseLibrary.Left = .inkPreview.Left
+    .cmdInsertContent.Left = 506.25
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+

@@ -1,0 +1,108 @@
+Attribute VB_Name = "PUBLIC_VARIABLES"
+Option Explicit
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' PUBLIC_VARIABLES
+' By J F Pollock, josephfpollock@gmail.com
+'
+' This module contains all public variables, constants and API declarations for the project.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+'=======================
+'PUBLIC VARIABLES
+'=======================
+
+Public myRibbon As IRibbonUI
+Public myTag As String
+Public CustomUndo As Word.UndoRecord              'For holding custom undo records.
+
+Public p_oAppEvents As New clsAppEvents           'Application events.
+Public p_oDocEvents As clsDocEvents               'Document events.
+Public p_oTemplate As Word.Template               'Stores a reference to this template.
+
+Public p_appCC As Word.ContentControl             'The currently selected application added Content Control (ST, DD or LE user variable).
+Public p_bCCSelected As Boolean                   'Is a Content Control selected (application added or not).
+Public p_bHighlight As Boolean                    'Are user variables highlighted.
+Public p_bRemoveTextWithVariable As Boolean       'Ribbon checkbox to remove variable text when removing variables.
+Public p_bEnd As Boolean                          'If Word is closing, p_bEnd = True (to stop the DocumentChange event firing continuously).
+Public p_bAppInsert As Boolean                    'To identify a CC being added by this application (appCCs).
+
+Public p_arrMaster() As Variant                   'Master array for storing a sorted array of CC data from each target document - gathering process.
+Public p_colVariableDescriptions As Collection    'Collection for storing all variable descriptions (collected from document variables in each target document).
+Public p_ufGather As ufGatheredVariables          'Public form to be accessed by clsRuntimeControlEvents.
+Public p_bSkipDocEvents As Boolean                'Skip all document CC events when True.
+
+'Not used at present.
+'Public p_bSkipAppEvents As Boolean                'Skip all app events when True (DocBeforeClose, DocOpen, DocChange).
+
+
+'=======================
+'PUBLIC CONSTANTS
+'=======================
+
+Public Const p_cstrLoc As String = "User variables have the following restrictions:" & vbCr + vbCr _
+                                 & "1. Can't be inserted inside or around other variables." & vbCr _
+                                 & "2. Can't contain or overlap other variables." & vbCr _
+                                 & "3. There must be at least one space between variables."
+
+'User variable BackgroundPatternColors.
+Public Const p_clngSTColor As Long = 10092543    'wdColorLightYellow
+Public Const p_clngDDColor As Long = 13434828    'wdColorLightGreen
+Public Const p_clngLEColor As Long = 10079487    'wdColorTan
+
+'Building Block gallery types and categories.
+Public Const p_clngGalleryTypeL As Long = 33                  'wdTypeCustom5 for storing user Library.
+Public Const p_clngGalleryTypeV As Long = 32                  'wdTypeCustom4 for storing Saved Variables.
+Public Const p_cstrBBCategoryV As String = "Saved variables"  'The Category name used for saved Building Block user variables.
+
+                            
+Public Const p_cstrDelimiter As String = "||"    'Used to create unique node keys by delimiting category name and bb name (e.g. sKey:= CategoryName & "||" BBName).
+                                                 'cstrDelimiter (||) is not allowed to be included as part of Category or Building Block names.
+
+'=======================
+'PUBLIC API DECLARATIONS
+'=======================
+
+'For storing pointer to ribbon.
+#If VBA7 Then
+  Public Declare PtrSafe Sub CopyMemory Lib "kernel32" Alias "RtlMoveMemory" (destination As Any, source As Any, ByVal length As Long)
+#Else
+  Public Declare Sub CopyMemory Lib "kernel32" Alias "RtlMoveMemory" (destination As Any, source As Any, ByVal length As Long)
+#End If
+
+'For pasting to inkEdit control.
+#If VB7 Then
+  Public Declare PtrSafe Function SendMessage Lib "USER32" Alias "SendMessageA" (ByVal hWnd As LongPtr, ByVal wMsg As Long, ByVal wParam As LongPtr, lParam As Any) As LongPtr
+#Else
+  Public Declare Function SendMessage Lib "USER32" Alias "SendMessageW" (ByVal hWnd As Long, ByVal wMsg As Long, ByVal wParam As Long, lParam As Any) As Long
+#End If
+Public Const WM_PASTE = &H302
+
+'For adding minimize button to userform or removing X button.
+#If VBA7 Then
+  #If Win64 Then
+    Public Declare PtrSafe Function GetWindowLongPtr Lib "USER32" Alias "GetWindowLongPtrA" (ByVal hWnd As LongPtr, ByVal nIndex As Long) As LongPtr
+    Public Declare PtrSafe Function SetWindowLongPtr Lib "USER32" Alias "SetWindowLongPtrA" (ByVal hWnd As LongPtr, ByVal nIndex As Long, ByVal dwNewLong As LongPtr) As LongPtr
+  #Else
+    Public Declare PtrSafe Function GetWindowLongPtr Lib "USER32" Alias "GetWindowLongA" (ByVal hWnd As LongPtr, ByVal nIndex As Long) As LongPtr
+    Public Declare PtrSafe Function SetWindowLongPtr Lib "USER32" Alias "SetWindowLongA" (ByVal hWnd As LongPtr, ByVal nIndex As Long, ByVal dwNewLong As LongPtr) As LongPtr
+  #End If
+  Public Declare PtrSafe Function FindWindow Lib "USER32" Alias "FindWindowA" (ByVal lpClassName As String, ByVal lpWindowName As String) As LongPtr
+  Public Declare PtrSafe Function ShowWindow Lib "USER32" (ByVal hWnd As LongPtr, ByVal nCmdShow As Long) As Long
+  Public p_hWnd As LongPtr
+  Public p_lngStyle As LongPtr
+#Else
+  Private Declare Function GetWindowLongPtr Lib "USER32" Alias "GetWindowLongA" (ByVal hWnd As Long, ByVal nIndex As Long) As Long
+  Private Declare Function SetWindowLongPtr Lib "USER32" Alias "SetWindowLongA" (ByVal hWnd As Long, ByVal nIndex As Long, ByVal dwNewLong As Long) As Long
+  Public Declare Function FindWindow Lib "USER32" Alias "FindWindowA" (ByVal lpClassName As String, ByVal lpWindowName As String) As Long
+  Public Declare Function ShowWindow Lib "USER32" (ByVal hWnd As Long, ByVal nCmdShow As Long) As Long
+  Public p_hWnd As Long
+  Public p_lngStyle As Long
+#End If
+
+'Required for "RemoveCloseButton" and "AddMinimizeButton" procedures.
+Public Const GWL_STYLE = (-16)
+Public Const WS_SYSMENU = &H80000
+Public Const SW_MINIMIZE = 6
+Public Const SW_RESTORE = 9
+                                

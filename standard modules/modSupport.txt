@@ -1,0 +1,622 @@
+Attribute VB_Name = "modSupport"
+Option Explicit
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' modSupport
+' By J F Pollock, josephfpollock@gmail.com
+'
+' This module contains procedures & functions used by other modules.
+'
+' This module contains the following procedures:
+'
+'   GrabTemplate
+'   SetUpDocumentEvents
+'   HighlightVariables
+'   fcnInterferringOrAdjactentCC
+'   EnableControls
+'   TurnOffFunctionality
+'   TurnOnFunctionality
+'   UpdateTemplate
+'   InsertBuildingBlock
+'   MoveBuildingBlock
+'   EditBuildingBlockName
+'   SaveBuildingBlock
+'   DeleteBuildingBlock
+'   DeleteBuildingBlockCategory
+'   CategoryExists
+'   CategoryEmpty
+'   BuildingBlockExists
+'   RemoveCloseButton
+'   AddMinimizeButton
+'
+' Required documentation is in each procedure.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+Sub AutoExit()
+  #If DEBUGMODE = 1 Then
+    Exit Sub
+  #End If
+  UpdateTemplate
+End Sub
+
+Public Sub GrabTemplate()
+  Set p_oTemplate = Templates(ThisDocument.FullName)
+End Sub
+
+Public Sub UpdateTemplate()
+'Graham Mayor - http://www.gmayor.com
+Dim bBackup As Boolean
+  bBackup = Options.CreateBackup
+  Options.CreateBackup = False
+  ThisDocument.Save
+  Options.CreateBackup = bBackup
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Public Sub SetUpDocumentEvents(Optional Doc As Word.Document = Nothing)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to set up document events (mainly content control events) for all documents.
+'Ensures application added content controls are functional across all documents.
+'If number of open documents = 0 then skip this procedure and set p_bEnd = True
+'to stop clsThisApp.oApp_DocumentChange event firing continuously.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  On Error GoTo lbl_Exit
+  Set p_oDocEvents = Nothing
+  If Application.Documents.Count = 0 Then p_bEnd = True: Exit Sub
+  'If Doc = Nothing then assume user is switching between documents.
+  If Doc Is Nothing Then Set Doc = ActiveDocument
+  Set p_oDocEvents = New clsDocEvents
+  Set p_oDocEvents.oDoc = Doc
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Public Function GetRibbon() As IRibbonUI
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function which allows us to reference the ribbon, regardless of wether the public variable
+'has been lost. Utilizes the API CopyMemory library and returns a Ribbon instance.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oRibbon As Object
+#If VBA7 Then
+  Dim lRibbonPointer As LongPtr
+#Else
+  Dim lRibbonPointer As Long
+#End If
+  'Get stored pointer.
+  lRibbonPointer = ThisDocument.Variables("RibbonPointer").Value
+  'Reload from memory.
+  CopyMemory oRibbon, lRibbonPointer, LenB(lRibbonPointer)
+  Set GetRibbon = oRibbon
+lbl_Exit:
+  Exit Function
+End Function
+
+Public Sub RefreshRibbon(Tag As String)
+  myTag = Tag
+  If myRibbon Is Nothing Then
+    Set myRibbon = GetRibbon
+  Else
+    myRibbon.Invalidate
+  End If
+End Sub
+
+Public Sub HighlightVariables()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to highlight all application added Content Controls.
+'CCs are highlighted with predefined color or default color.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Word.Document
+Dim oCCs As Word.ContentControls
+Dim oCC As Word.ContentControl
+Dim lngSTColor As Long
+Dim lngDDColor As Long
+Dim lngLEColor As Long
+Dim oUndo As Word.UndoRecord
+  On Error GoTo lbl_Exit
+  Set oUndo = Application.UndoRecord
+  ''''''''''''''''''''''''''
+  'Set the highlight colors.
+  ''''''''''''''''''''''''''
+  If p_bHighlight Then
+    lngSTColor = p_clngSTColor
+    lngDDColor = p_clngDDColor
+    lngLEColor = p_clngLEColor
+  Else
+    '''''''''''''''
+    'Default color.
+    '''''''''''''''
+    lngSTColor = -16777216
+    lngDDColor = -16777216
+    lngLEColor = -16777216
+  End If
+  For Each oDoc In Documents
+    Set oCCs = oDoc.SelectContentControlsByTag("ccApp")
+    If oCCs.Count > 0 Then
+      oUndo.StartCustomRecord "Highlight variables"
+      For Each oCC In oCCs
+        oCC.LockContents = False
+        With oCC.Range.Font.Shading
+          Select Case Left(oCC.Title, 2)
+            Case "ST"
+              .BackgroundPatternColor = lngSTColor
+            Case "DD"
+              .BackgroundPatternColor = lngDDColor
+            Case "LE"
+              .BackgroundPatternColor = lngLEColor
+          End Select
+        End With
+        oCC.LockContents = True
+      Next oCC
+      oUndo.EndCustomRecord
+    End If
+  Next oDoc
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Public Function fcnInterferringOrAdjactentCC(Optional ByVal lngCCType As Long = 1) As Boolean
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Originally coded by G.Maxey. Modified by J F Pollock.
+'
+'Function used when adding a user variable. To determine that it doesn't interfere with any others.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCC As Word.ContentControl
+Dim oSubCC As Word.ContentControl
+Dim oGrpCC As Word.ContentControl
+Dim oRngCheck As Word.Range
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'The CC types inserted by the application are 0 - Rich Text, 1 - Text, 3 - Combo Box.
+  'At present, the same restrictions will be placed on all inserted CCs, therefore
+  'this function will be called throughout the project with no argument supplied i.e.
+  'each inserted CC will be treated as a plain text CC.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+  fcnInterferringOrAdjactentCC = False
+  
+  If Selection.Range.ContentControls.Count > 0 Then
+    Select Case lngCCType
+      Case 0, 9: 'Do nothing: Rich Text and repeating CCs can contain other CCs.
+      Case Else: fcnInterferringOrAdjactentCC = True
+    End Select
+    Exit Function
+  End If
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'The selection doesn't contain content controls. Check the
+  'current story range for adjacent CCs by looping through all
+  'CCs in the range. Then, check the selection against each CC
+  'to determine if it is inside, or on the border.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oRngCheck = ActiveDocument.StoryRanges(Selection.Range.StoryType)
+  
+  For Each oCC In oRngCheck.ContentControls
+  
+    With Selection.Range
+    
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'If the end of the selection range contains a paragraph mark, and an
+      'existing CC lies at the beginning of the paragraph immediately following
+      'it, then allow the CC to be added since they are in different paragraphs
+      'Also, ensure that the start of the selection range doesn't fall within
+      'another CC, or on its boundary.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      If .End = oCC.Range.start - 1 And .start <> .End Then
+        If Right(.Text, 1) = Chr(13) Then
+          For Each oSubCC In oRngCheck.ContentControls
+            '''''''''''''''''''''''''''''''''''''''''''
+            'Ensure start of selection doesn't fall on
+            'the boundary or within another CC.
+            '''''''''''''''''''''''''''''''''''''''''''
+            If .start = oSubCC.Range.End Or .start = oSubCC.Range.End - 1 Then
+              Select Case lngCCType
+                Case 0, 9: 'OK. Do nothing
+                Case Else: fcnInterferringOrAdjactentCC = True
+              End Select
+              Exit Function
+            End If
+          Next oSubCC
+          Exit Function
+        End If
+      End If
+      
+      If .start = oCC.Range.start Or .start = oCC.Range.End _
+        Or .End = oCC.Range.start Or .End = oCC.Range.End _
+        Or .start = oCC.Range.End + 1 Or .End = oCC.Range.start + 1 _
+        Or .End = oCC.Range.start - 1 Or .End = oCC.Range.End + 1 _
+        Or .InRange(oCC.Range) Then
+        
+        If oCC.Type = 7 Then 'Group CC.
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'The selection is adjacent to, or within the range of a group CC, check
+          'each CC within the group. If the selection lies within any of the CCs
+          'in the group then check the CC type - only allow type 0 & 9.
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          For Each oGrpCC In oCC.Range.ContentControls
+            If .InRange(oGrpCC.Range) Then
+              If oGrpCC.Type = 0 Or oGrpCC.Type = 9 Then GoTo CC_InRange_OK
+            End If
+          Next oGrpCC
+          
+          fcnInterferringOrAdjactentCC = True
+          Exit Function
+        Else
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'The selection is adjacent to, or within the range of another CC.
+          'Only allow CC type 0 or 9 to be added.
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          Select Case lngCCType
+            Case 0, 9: 'OK. Do nothing
+            Case Else: fcnInterferringOrAdjactentCC = True: Exit Function
+          End Select
+        End If
+        
+      End If
+      
+    End With
+    
+  Next oCC
+  
+CC_InRange_OK:
+  Exit Function
+End Function
+
+Public Sub EnableControls(ByRef oForm As MSForms.UserForm, bEnable As Boolean, ParamArray oControls() As Variant)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to enable or disable all controls in the passed userform oForm. All control names
+'within the ParamArray parameter oControls() are exempt from the enable/disable action.
+'The easiest way to use this procedure is to set up a string array with the exempt control names:
+'
+'Dim arr(2) as string
+' arr(0) = "ControlNameA"
+' arr(1) = "ControlNameB"
+' arr(2) = "ControlNameC"
+'
+'Then pass this array into the sub: EnableControls oForm, False, arr()
+'
+'Parameters:
+'----------
+'oForm         The target userform.
+'
+'bEnable       Boolean. True (enable controls) or False (disable controls).
+'
+'oControls()   Variant array holding the name of the controls which are exempt from the
+'              enable or disable action. If omitted then all controls are enabled/disabled.
+'              For the purposes of this app, oControls() should have one dimension containing
+'              a string array of control names.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCtrl As MSForms.Control
+Dim oLbl As MSForms.Label
+Dim oTxt As MSForms.TextBox
+Dim oCombo As MSForms.ComboBox
+Dim oLst As MSForms.ListBox
+Dim oChk As MSForms.Checkbox
+Dim oOpt As MSForms.OptionButton
+Dim oTog As MSForms.ToggleButton
+Dim oFra As MSForms.Frame
+Dim oCmd As MSForms.CommandButton
+Dim oTab As MSForms.TabStrip
+Dim oMulti As MSForms.MultiPage
+Dim oScroll As MSForms.ScrollBar
+Dim oSpin As MSForms.SpinButton
+Dim strControlType As String
+Dim i As Long
+  #If DEBUGMODE = 1 Then
+    '''''''''''''''''''''''''''''''''''''''''''''''''''
+    'First: determine if the oControls() argument has been supplied.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''
+    If UBound(oControls) <> -1 Then
+      ''''''''''''''''''''''''''''''''''''''''''''''''
+      'oControls() has been supplied.
+      'Second: ensure oControls() has only 1 dimension.
+      'The base of the ParamArray argument is 0 regardless
+      'of the Option Base statement.
+      ''''''''''''''''''''''''''''''''''''''''''''''''
+      Debug.Assert UBound(oControls) = 0
+      ''''''''''''''''''''''''''''''''''''''''''''''''
+      'Third: ensure that the first and only dimension of
+      'the oControls() argument contains an array.
+      ''''''''''''''''''''''''''''''''''''''''''''''''
+      Debug.Assert IsArray(oControls(0)) = True
+      ''''''''''''''''''''''''''''''''''''''''''''''''
+      'Fourth: test to make sure the array isn't empty.
+      ''''''''''''''''''''''''''''''''''''''''''''''''
+      Debug.Assert modArraySupport.IsArrayEmpty(oControls(0)) = False
+    End If
+  #End If
+  For Each oCtrl In oForm.Controls
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If UBound of oControls() is -1 then the ParamArray argument
+    'has been omitted therefore enable/disable all.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If UBound(oControls) <> -1 Then
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'The ParamArray argument oControls() is an array of type Variant.
+    'For the purposes of this app it should have a single dimension
+    'oControls(0). This single dimension also contains an array of type
+    'String. So we must loop through the string array within the first
+    '(and only) dimension of the variant array argument. The number of
+    'dimensions in the string array is equal to the number of control
+    'names we are providing to be exempt from the enable/disable action.
+    '
+    'Loop through first (and only) dimentsion:
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      For i = LBound(oControls(0)) To UBound(oControls(0))
+    '''''''''''''''''''''''''''''''''''''''''''
+    'Compare the values within the string array.
+    '''''''''''''''''''''''''''''''''''''''''''
+        If oCtrl.Name = oControls(0)(i) Then GoTo NextControl
+      Next i
+    End If
+    Select Case TypeName(oCtrl)
+      Case "Label"
+        Set oLbl = oCtrl
+        oLbl.Enabled = bEnable
+      Case "TextBox"
+        Set oTxt = oCtrl
+        oTxt.Enabled = bEnable
+      Case "ComboBox"
+        Set oCombo = oCtrl
+        oCombo.Enabled = bEnable
+      Case "ListBox"
+        Set oLst = oCtrl
+        oLst.Enabled = bEnable
+      Case "CheckBox"
+        Set oChk = oCtrl
+        oChk.Enabled = bEnable
+      Case "OptionButton"
+        Set oOpt = oCtrl
+        oOpt.Enabled = bEnable
+      Case "ToggleButton"
+        Set oTog = oCtrl
+        oTog.Enabled = bEnable
+      Case "Frame"
+        Set oFra = oCtrl
+        oFra.Enabled = bEnable
+      Case "CommandButton"
+        Set oCmd = oCtrl
+        oCmd.Enabled = bEnable
+      Case "TabStrip"
+        Set oTab = oCtrl
+        oTab.Enabled = bEnable
+      Case "MultiPage"
+        Set oMulti = oCtrl
+        oMulti.Enabled = bEnable
+      Case "ScrollBar"
+        Set oScroll = oCtrl
+        oScroll.Enabled = bEnable
+      Case "SpinButton"
+        Set oSpin = oCtrl
+        oSpin.Enabled = bEnable
+    End Select
+NextControl:
+  Next oCtrl
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Public Sub TurnOffFunctionality()
+  With Application
+    .ScreenUpdating = False
+    .System.Cursor = wdCursorWait
+    .EnableCancelKey = wdCancelDisabled
+  End With
+End Sub
+
+Public Sub TurnOnFunctionality()
+  With Application
+    .ScreenUpdating = True
+    .System.Cursor = wdCursorNormal
+    .EnableCancelKey = wdCancelInterrupt
+  End With
+End Sub
+
+'=========================================================
+'The following procedures are for Building Block support.
+'=========================================================
+
+Public Function fcnMoveBuildingBlock(BuildingBlockName As String, OldCategoryName As String, NewCategoryName As String) As Boolean
+Dim oBB As Word.BuildingBlock
+Dim oRng As Word.Range
+Dim sBBDescription As String
+  On Error GoTo err_Handler
+  If p_oTemplate Is Nothing Then GrabTemplate
+  'Get the existing Building Block.
+  Set oBB = p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL).Categories(OldCategoryName).BuildingBlocks(BuildingBlockName)
+  'Get the current description if available.
+  sBBDescription = oBB.Description
+  'Use the Add-In template as a scratch range to insert the original BB content.
+  Set oRng = ThisDocument.Range
+  oRng.Delete
+  oRng.End = oRng.End - 1
+  Set oRng = oBB.Insert(oRng)
+  'Delete the original Building Block.
+  oBB.Delete
+  'Add the existing Building Block from old category to new category.
+  p_oTemplate.BuildingBlockEntries.Add BuildingBlockName, p_clngGalleryTypeL, NewCategoryName, oRng, sBBDescription, wdInsertContent
+  'Delete the scratch range and save the add-in template.
+  Set oRng = ThisDocument.Range
+  oRng.Delete
+  'Set return value.
+  fcnMoveBuildingBlock = True
+lbl_Exit:
+  Exit Function
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & Err.Description
+  #End If
+  Resume lbl_Exit
+End Function
+
+Public Function fcnEditBuildingBlockNameAndDescription(CategoryName As String, OldBuildingBlockName As String, NewBuildingBlockName As String, NewDescription As String) As Boolean
+Dim oBB As Word.BuildingBlock
+Dim oRng As Word.Range
+Dim OldDescription As String
+  On Error GoTo err_Handler
+  If p_oTemplate Is Nothing Then GrabTemplate
+  'Get the original Building Block.
+  Set oBB = p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL).Categories(CategoryName).BuildingBlocks(OldBuildingBlockName)
+  'Get the current description.
+  OldDescription = oBB.Description
+  'Ensure there has been a change in either the name or description. If not, exit.
+  If OldBuildingBlockName = NewBuildingBlockName And OldDescription = NewDescription Then fcnEditBuildingBlockNameAndDescription = True: Exit Function
+  'The Building Block Name and/or Description has been edited:
+  'Use the Add-In template as a scratch range to insert the original BB content.
+  Set oRng = ThisDocument.Range
+  oRng.End = oRng.End - 1
+  Set oRng = oBB.Insert(oRng)
+  'Delete the original Building Block.
+  oBB.Delete
+  'Save/Add the Building Block with edited name/description.
+  p_oTemplate.BuildingBlockEntries.Add NewBuildingBlockName, p_clngGalleryTypeL, CategoryName, oRng, NewDescription, wdInsertContent
+  'Delete the scratch range and save the add-in template.
+  Set oRng = ThisDocument.Range
+  oRng.Delete
+  'Set return value.
+  fcnEditBuildingBlockNameAndDescription = True
+lbl_Exit:
+  Exit Function
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & Err.Description
+  #End If
+  Resume lbl_Exit
+End Function
+
+Public Function fcnDeleteBuildingBlock(clngGalleryType As Long, CategoryName As String, BuildingBlockName As String) As Boolean
+  On Error Resume Next
+  If p_oTemplate Is Nothing Then GrabTemplate
+  p_oTemplate.BuildingBlockTypes(clngGalleryType).Categories(CategoryName).BuildingBlocks(BuildingBlockName).Delete
+  If Err.Number <> 0 And Err.Number <> 5941 Then
+    #If DEBUGMODE = 1 Then
+      Stop
+      Debug.Print Err.Number & Err.Description
+    #End If
+    Exit Function
+  End If
+  'Set return value.
+  fcnDeleteBuildingBlock = True
+lbl_Exit:
+  Exit Function
+End Function
+
+Public Function fcnDeleteBuildingBlockCategory(clngGalleryType As Long, CategoryName As String) As Boolean
+Dim oCat As Word.Category
+Dim i As Long
+  On Error GoTo err_Handler
+  If p_oTemplate Is Nothing Then GrabTemplate
+  Set oCat = p_oTemplate.BuildingBlockTypes(clngGalleryType).Categories(CategoryName)
+  For i = oCat.BuildingBlocks.Count To 1 Step -1
+    oCat.BuildingBlocks(i).Delete
+  Next i
+  'Set return value.
+  fcnDeleteBuildingBlockCategory = True
+lbl_Exit:
+  Exit Function
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & Err.Description
+  #End If
+  Resume lbl_Exit
+End Function
+
+Public Function fcnSaveBuildingBlock(ContentRange As Word.Range, clngGalleryType As Long, CategoryName As String, BuildingBlockName As String, Optional Description As String) As Boolean
+  On Error GoTo err_Handler
+  If p_oTemplate Is Nothing Then GrabTemplate
+  p_oTemplate.BuildingBlockEntries.Add BuildingBlockName, clngGalleryType, CategoryName, ContentRange, Description, wdInsertContent
+  'Set return value.
+  fcnSaveBuildingBlock = True
+lbl_Exit:
+  Exit Function
+err_Handler:
+  #If DEBUGMODE = 1 Then
+    Stop
+    Debug.Print Err.Number & Err.Description
+  #End If
+  Resume lbl_Exit
+End Function
+
+Public Function fcnInsertBuildingBlock(clngGalleryType As Long, CategoryName As String, BuildingBlockName As String) As Boolean
+  On Error GoTo err_Handler
+  If p_oTemplate Is Nothing Then GrabTemplate
+  p_oTemplate.BuildingBlockTypes(clngGalleryType).Categories(CategoryName).BuildingBlocks(BuildingBlockName).Insert Selection.Range
+  'Set return value.
+  fcnInsertBuildingBlock = True
+lbl_Exit:
+  Exit Function
+err_Handler:
+  If Err.Number <> -2147467259 And Err.Number <> 4605 Then
+    #If DEBUGMODE = 1 Then
+      Stop
+      Debug.Print Err.Number & Err.Description
+    #End If
+  End If
+  Resume lbl_Exit
+End Function
+
+Public Function CategoryExists(clngGalleryType As Long, CategoryName As String) As Boolean
+Dim lngTest As Long
+  On Error GoTo lbl_Exit
+  If p_oTemplate Is Nothing Then GrabTemplate
+  lngTest = p_oTemplate.BuildingBlockTypes(clngGalleryType).Categories(CategoryName).BuildingBlocks.Count
+  CategoryExists = True
+lbl_Exit:
+  Exit Function
+End Function
+
+Public Function CategoryEmpty(clngGalleryType As Long, CategoryName As String) As Boolean
+Dim lngTest As Long
+  On Error Resume Next
+  If p_oTemplate Is Nothing Then GrabTemplate
+  lngTest = p_oTemplate.BuildingBlockTypes(clngGalleryType).Categories(CategoryName).BuildingBlocks.Count
+  If lngTest = 0 Then CategoryEmpty = True
+lbl_Exit:
+  Exit Function
+End Function
+
+Public Function BuildingBlockExists(clngGalleryType As Long, CategoryName As String, BuildingBlockName As String) As Boolean
+Dim oBB As Word.BuildingBlock
+  On Error GoTo lbl_Exit
+  If p_oTemplate Is Nothing Then GrabTemplate
+  Set oBB = p_oTemplate.BuildingBlockTypes(clngGalleryType).Categories(CategoryName).BuildingBlocks(BuildingBlockName)
+  BuildingBlockExists = True
+lbl_Exit:
+  Exit Function
+End Function
+
+'=========================================================
+'The following procedures are for userform support.
+'=========================================================
+
+Public Sub AddMinimizeButton(strUFCaption As String)
+  p_hWnd = FindWindow(vbNullString, strUFCaption)
+  p_lngStyle = GetWindowLongPtr(p_hWnd, GWL_STYLE)
+  If (p_lngStyle And &H20000) = 0 Then
+    SetWindowLongPtr p_hWnd, GWL_STYLE, p_lngStyle Or &H20000
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Public Sub RemoveCloseButton(strUFCaption As String)
+  p_hWnd = FindWindow(vbNullString, strUFCaption)
+  p_lngStyle = GetWindowLongPtr(p_hWnd, GWL_STYLE)
+  If p_lngStyle And WS_SYSMENU > 0 Then
+    SetWindowLongPtr p_hWnd, GWL_STYLE, (p_lngStyle And Not WS_SYSMENU)
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+
+
+
+
+
+

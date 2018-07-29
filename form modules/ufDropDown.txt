@@ -1,0 +1,1401 @@
+VERSION 5.00
+Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} ufDropDown 
+   Caption         =   "Enter Drop-Down details"
+   ClientHeight    =   5265
+   ClientLeft      =   120
+   ClientTop       =   465
+   ClientWidth     =   12345
+   OleObjectBlob   =   "ufDropDown.frx":0000
+   ShowModal       =   0   'False
+   StartUpPosition =   1  'CenterOwner
+End
+Attribute VB_Name = "ufDropDown"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Option Explicit
+
+'Userform properties.
+Private m_bMultipleDDs As Boolean          'Indicates if duplicate DDs exist in the document.
+
+'Module level variables.
+Private m_CurrentAction As ndCurrentAction 'Defines why the UF has been initialized (see enum below).
+Private m_oDoc As Document                 'Stores a pointer to the currently active document.
+
+Private m_appCC As Word.ContentControl     'Stores a pointer to the existing DD variable being edited by the user. Usually, p_appCC would be
+                                           'used for this purpose, but since ufDD is now modeless, it is possible for the user to select another
+                                           'appCC during the editing of an existing appCC which changes the value of p_appCC and loses the original.
+                                           'The previous method using p_appCC, would cause a problem when trying to write any changes to the variable,
+                                           'as we would be trying to write to the wrong CC user variable.
+
+Private m_oRngInitial As Word.Range        'Stores the users selection range for adding the DD variable. ufDD is modeless in order to allow the
+                                           'user to add selections to the DD list, so we have to get a handle on the initial range so we add the
+                                           'variable in the correct location since the user can make other selections while the form is active.
+                                          
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'The below enumerations are used to define why the userform has been initialized.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Private Enum ndCurrentAction
+  EditSelected    'User is editing an existing DD variable.
+  InsertDuplicate 'User inserts a new DD variable with sel text that matches an ex.DD variable in the doc.
+  InsertNew       'User inserts a new DD variable at the insertion point or with sel text that doesn't match any ex.DD variables in the doc.
+End Enum
+
+Private Sub UserForm_Initialize()
+ '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to initialize ufDropDown. This userform will be initialized for one of
+'three seperate reasons. These are described below followed by a description of the
+'action taken by the userform. The CurrentAction enumeration is used to communicate
+'the type of action which has caused the initialization and communicate this to any
+'relevant procedures in the UF code module:
+'
+'Reason 1: Edit existing DD variable (CurrentAction = EditSelected)
+'Action  : UF is auto-populated based on the properties of the selected DD variable.
+'
+'Reason 2: Insert new, selection text matches existing (CurrentAction = InsertDuplicate)
+'Action  : UF is auto-populated based on an existing duplicate DD variable.
+'
+'Reason 3: Insert new, unique (CurrentAction = InsertNew)
+'Action  : UF is displayed with no controls auto-populated.
+
+'When the reason for the UF initialization is established (this procedure), set
+'m_bCurrentAction using the enumerations listed.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCC As Word.ContentControl
+Dim strCCTitle As String
+
+  On Error GoTo err_Handler
+  
+  'Set userform dimensions
+  With Me
+    .Height = 292.25
+    .Width = 629.25
+  End With
+
+  ''''''''''''''''''''''''''''''''''''''''''''
+  'Set the initial range and set  a reference
+  'to the document based on the initial range.
+  ''''''''''''''''''''''''''''''''''''''''''''
+  Set m_oRngInitial = Selection.Range
+  Set m_oDoc = m_oRngInitial.Document
+
+  '''''''''''''''''''''''''''''''''''''''''''
+  'If p_appCC has been allocated then we are
+  'editing the selected DD user variable.
+  '''''''''''''''''''''''''''''''''''''''''''
+  If Not p_appCC Is Nothing Then
+    ''''''''''''''''''''''''''''''''''''''''''
+    'Set a pointer to the current variable as
+    'it could possibly change during editing.
+    ''''''''''''''''''''''''''''''''''''''''''
+    Set m_appCC = p_appCC
+    ''''''''''''''''''''''''''''''''''''
+    'Auto-populate based on selected DD
+    'variable being edited.
+    ''''''''''''''''''''''''''''''''''''
+    m_CurrentAction = EditSelected
+    Call PopulateUserform(p_appCC)
+    GoTo lbl_Exit
+  End If
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''
+  'If the selection is an insertion point then we
+  'are inserting a new variable.
+  ''''''''''''''''''''''''''''''''''''''''''''''''
+  If m_oRngInitial.start = m_oRngInitial.End Then
+    ''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Populate based on new unique variable being added.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''
+    m_CurrentAction = InsertNew
+    Call PopulateUserform
+    GoTo lbl_Exit
+  End If
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'The selection is a range. If the range text is equal
+  'to an existing DD variable title then we are inserting
+  'a duplicate, otherwise, we are inserting a new variable.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  strCCTitle = "DD: " & Trim(Replace(Selection.Text, Chr(13), ""))
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If the following line throws error 5941 then no existing CC has
+  'a title that matches the range text, therfore we are inserting a
+  'new variable.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oCC = m_oDoc.SelectContentControlsByTitle(strCCTitle).Item(1)
+  m_CurrentAction = InsertDuplicate
+  Call PopulateUserform(oCC)
+
+lbl_Exit:
+
+  Call RefreshRibbon(Tag:="Grp4Btn1")
+  
+  Exit Sub
+  
+err_Handler:
+  If Err.Number = 5941 Then
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'No CC with title strCCTitle exists in the document.
+    'Therefore, we are inserting a new variable.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    m_CurrentAction = InsertNew
+    Call PopulateUserform
+  Else
+    Stop
+  End If
+  Resume lbl_Exit
+End Sub
+
+Private Sub UserForm_Terminate()
+  Call RefreshRibbon(Tag:="*")
+End Sub
+
+'**********************************************************
+'General controls
+'**********************************************************
+
+Private Sub cmdAddFromDoc_Click()
+Dim strDDValue As String
+Dim i As Long
+
+  '''''''''''''''''''''''''''
+  'Ensure a valid selection.
+  '''''''''''''''''''''''''''
+  With Selection
+    If .Type = 0 Or .Type = 1 Then
+      lblDDUserInfo.Caption = "Make a selection."
+      GoTo lbl_Exit
+    End If
+  End With
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'NOTE - revise the following caption statement - seems unclear.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+  If IsSelSuitableForDD = False Then
+    lblDDUserInfo.Caption = "Select suitable text. Selection can't contain multiple paragraphs," & _
+                            " images, section breaks etc."
+    GoTo lbl_Exit
+  End If
+  
+  strDDValue = Trim(Replace(Selection.Text, Chr(13), ""))
+  
+  ''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure selection is 256 characters or less.
+  ''''''''''''''''''''''''''''''''''''''''''''
+  If Len(strDDValue) > 256 Then
+    lblDDUserInfo.Caption = "Selection is too large, 256 characters max."
+    GoTo lbl_Exit
+  End If
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'We now have a valid selection item - ensure it doesn't already exist.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  For i = 0 To lstDDValues.ListCount - 1
+   If lstDDValues.List(i, 1) = strDDValue Then
+      ''''''''''''''''''''''''''''
+      'Item already exists - exit.
+      ''''''''''''''''''''''''''''
+      lblDDUserInfo.Caption = "Item already exists."
+      GoTo lbl_Exit
+    End If
+  Next i
+
+  ''''''''''''''''''''
+  'Add item to listbox.
+  ''''''''''''''''''''
+  lblDDUserInfo.Caption = ""
+  With lstDDValues
+    .AddItem
+    .List(.ListCount - 1, 0) = .ListCount
+    .List(.ListCount - 1, 1) = strDDValue
+  End With
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdAddDDValue_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Adds the value entered in txtDDValue to lstDDValues.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim strDDValue As String
+Dim i As Long
+
+  strDDValue = Trim(txtDDValue.Value)
+  
+  ''''''''''''''''''''''''''''''''''''''
+  'Ensure the user has entered a value.
+  ''''''''''''''''''''''''''''''''''''''
+  If strDDValue = "" Or strDDValue = "Enter a variable value." Or strDDValue = "Item already exists." Then
+    If strDDValue = "" Then
+      txtDDValue.Value = "Enter a variable value."
+    ElseIf strDDValue = "Enter a variable value." Then
+      txtDDValue.Value = ""
+    ElseIf strDDValue = "Item already exists." Then
+      txtDDValue.Value = txtDDValue.Tag
+    End If
+    
+    With txtDDValue
+      .SetFocus
+      .SelStart = 0
+      .SelLength = Len(.Value)
+    End With
+    Exit Sub
+  End If
+  
+  '''''''''''''''''''''''''''''''
+  'Ensure item to be added doesn't
+  'already exist in the list.
+  '''''''''''''''''''''''''''''''
+  For i = 0 To lstDDValues.ListCount - 1
+   If lstDDValues.List(i, 1) = strDDValue Then
+      '''''''''''''''''''''
+      'Item already exists.
+      '''''''''''''''''''''
+      With txtDDValue
+        .Tag = txtDDValue.Value
+        .Value = "Item already exists."
+        .SetFocus
+        .SelStart = 0
+        .SelLength = Len(.Value)
+      End With
+      Exit Sub
+    End If
+  Next i
+  
+  ''''''''''''''''''''
+  'Add item to listbox.
+  ''''''''''''''''''''
+  lblDDUserInfo.Caption = ""
+  With lstDDValues
+    .AddItem
+    .List(.ListCount - 1, 0) = .ListCount
+    .List(.ListCount - 1, 1) = strDDValue
+  End With
+   
+lbl_Exit:
+  ClearAndSetFocus
+  Exit Sub
+End Sub
+
+Private Sub cmdEditDDValue_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to show the hidden textbox (txtDDEdit) and copy the
+'currently selected item in lstDDValues to it for editing.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Enusre an item is selected to edit. If there is only 1-no.
+  'item in the listbox then edit that item.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With lstDDValues
+    If .ListIndex = -1 Then
+      If .ListCount = 0 Or .ListCount > 1 Then
+        GoTo lbl_Exit
+      Else
+        .Selected(0) = True
+      End If
+    End If
+  End With
+
+  With cmdEditDDValue
+    
+    If .Caption = "Edit" Then
+      .Caption = "Apply"
+      ShowTxtDDEdit
+    Else
+      ''''''''''''''''''''''''''''''''''''''''''
+      'Ensure edited item isn't an empty string.
+      ''''''''''''''''''''''''''''''''''''''''''
+      If Len(Trim(txtDDEdit.Value)) > 0 Then
+        .Caption = "Edit"
+        HideTxtDDEdit
+        lblDDUserInfo.Caption = ""
+      Else
+        lblDDUserInfo.Caption = "Item can't be blank."
+        GoTo lbl_Exit
+      End If
+      
+    End If
+    
+  End With
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdCancelEdit_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Hide txtDDEdit. Don't write edited item back into lstDDValues.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  HideTxtDDEdit (False)
+  cmdEditDDValue.Caption = "Edit"
+  lblDDUserInfo.Caption = ""
+End Sub
+
+Private Sub cmdRemoveDDValue_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Removes the currently selected item from lstDDValues.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''
+  lblDDUserInfo.Caption = ""
+  If lstDDValues.ListIndex = -1 Then GoTo lbl_Exit
+  With lstDDValues
+    .RemoveItem (.ListIndex)
+  End With
+  RenumberListbox
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub spinDDValues_SpinUp()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Moves the currently selected item in lstDDValues up by one position.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim strTemp As String
+  
+  lblDDUserInfo.Caption = ""
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure at least two items exist and one is selected.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If lstDDValues.ListIndex = -1 Or lstDDValues.ListCount < 2 Then GoTo lbl_Exit
+  
+  With lstDDValues
+    '''''''''''''''''''''''''''''''''''
+    'Store currently selected list item.
+    '''''''''''''''''''''''''''''''''''
+    strTemp = .List(.ListIndex, 1)
+
+    On Error GoTo lbl_Exit
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Make current list item equal the one directly above.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    .List(.ListIndex, 1) = .List(.ListIndex - 1, 1)
+    
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Make the above list item value equal the stored value.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    .List(.ListIndex - 1, 1) = strTemp
+    
+    '''''''''''''''''''''''''''''''''''
+    'Keep the original item selected.
+    '''''''''''''''''''''''''''''''''''
+    .Selected(.ListIndex - 1) = True
+  End With
+  
+  RenumberListbox
+  
+lbl_Exit:
+  Exit Sub
+''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Expected Err.Number = 381. Tried to move top item up.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''
+End Sub
+
+Private Sub spinDDValues_SpinDown()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Moves the currently selected item in lstDDValues down by one position.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim strTemp As String
+  
+  lblDDUserInfo.Caption = ""
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure at least two items exist and one is selected.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If lstDDValues.ListIndex = -1 Or lstDDValues.ListCount < 2 Then GoTo lbl_Exit
+  
+  With lstDDValues
+    '''''''''''''''''''''''''''''''''''
+    'Store currently selected list item.
+    '''''''''''''''''''''''''''''''''''
+    strTemp = .List(.ListIndex, 1)
+    
+    On Error GoTo lbl_Exit
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Make current list item equal the one directly above.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    .List(.ListIndex, 1) = .List(.ListIndex + 1, 1)
+    
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Make the above list item value equal the stored value.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    .List(.ListIndex + 1, 1) = strTemp
+    
+    '''''''''''''''''''''''''''''''''''
+    'Keep the original item selected.
+    '''''''''''''''''''''''''''''''''''
+    .Selected(.ListIndex + 1) = True
+  End With
+  
+  RenumberListbox
+  
+lbl_Exit:
+  Exit Sub
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Expected Err.Number = 381. Tried to move bottom item down.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+End Sub
+
+Private Sub cmdClearDDValues_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Clears all values from lstDDValues. Requires secondary click to confirm.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim arr(7) As String  'Array to hold control names.
+
+  If lstDDValues.ListCount < 1 Then GoTo lbl_Exit
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Before the clear or cancel action takes place, most controls will
+  'be disabled and then subsequently re-enabled. The following list of
+  'controls are exempt from being disabled.
+  '
+  'Setup array of exempt controls using control names:
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  arr(0) = "cmdOK"
+  arr(1) = "cmdCancel"
+  arr(2) = "cmdClearDDValues"
+  arr(3) = "cmdCancelClear"
+  arr(4) = "fraDropDownValues"
+  arr(5) = "fraInformation"
+  arr(6) = "lblDDUserInfo"
+  arr(7) = "lblDDDuplicateAlert"
+  
+  With cmdClearDDValues
+  
+    If .Caption = "Clear" Then
+      .Caption = "Confirm"
+      .ForeColor = vbRed
+      cmdCancelClear.Enabled = True
+      
+      '''''''''''''''''''''''''''
+      'Disable required controls.
+      '''''''''''''''''''''''''''
+      Call modSupport.EnableControls(Me, False, arr())
+      
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Display user message and change focus to CancelClear
+      'incase of accidental click.
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''
+      lblDDUserInfo.Caption = "Click Confirm to clear all items, or Cancel to go back."
+      cmdCancelClear.SetFocus
+      
+    Else
+      .Caption = "Clear"
+      .ForeColor = vbButtonText
+      lstDDValues.Clear
+      cmdCancelClear.Enabled = False
+      
+      '''''''''''''''''''''''''''''''''''''''''''''''''
+      'Enable all controls apart from exempt list below.
+      '''''''''''''''''''''''''''''''''''''''''''''''''
+      Call modSupport.EnableControls(Me, True, Array("txtDDEdit", "cmdCancelClear", "cmdCancelEdit"))
+      
+      lblDDUserInfo.Caption = ""
+      
+    End If
+    
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdCancelClear_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to cancel the clear action on the listbox (lstDDValues).
+'All controls that were initially disabled while waiting for the final
+'confirmation click will be re-enabled.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+  ''''''''''''''''''''''''''''
+  'Disable cancel clear button.
+  ''''''''''''''''''''''''''''
+  cmdCancelClear.Enabled = False
+  
+  '''''''''''''''''''''
+  'Reset clear button.
+  '''''''''''''''''''''
+  With cmdClearDDValues
+    .Caption = "Clear"
+    .ForeColor = vbButtonText
+  End With
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''
+  'Enable all controls apart from exempt list below.
+  '''''''''''''''''''''''''''''''''''''''''''''''''
+  Call modSupport.EnableControls(Me, True, Array("txtDDEdit", "cmdCancelClear", "cmdCancelEdit"))
+  
+  lblDDUserInfo.Caption = ""
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdAutoPopulate_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'This procedure is used if the user is adding a new DD variable and types the name of an existing
+'variable into the variable name textbox (txtDDName). The auto-populate command button is then
+'displayed and the user is given the option to auto-populate the form. If they choose to auto-populate
+'then this proc routes execution to the PopulateUserform procedure.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCC As Word.ContentControl
+  
+  Set oCC = m_oDoc.SelectContentControlsByTitle("DD: " & Trim(txtDDName.Value)).Item(1)
+  Call PopulateUserform(oCC)
+  
+  cmdOK.Enabled = True
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdOK_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to validate the form and set its properties.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCCs As Word.ContentControls
+Dim oCC As Word.ContentControl
+Dim oRng As Word.Range
+Dim strDDName As String
+Dim strDDDescription As String
+Dim i As Long
+Dim arrDDValues() As Variant
+
+  On Error GoTo lbl_Unload
+
+  strDDName = Trim(txtDDName.Value)
+  strDDDescription = Trim(txtDDDescription.Value)
+
+  ''''''''''''''''''''''''''''''''''''''
+  'Ensure the user has named the variable.
+  ''''''''''''''''''''''''''''''''''''''
+  If strDDName = "" Or strDDName = "Enter a variable name." Then
+    '''''''''''''''''''''''''
+    'Alert the user and exit.
+    '''''''''''''''''''''''''
+    With txtDDName
+      .Value = "Enter a variable name."
+      .SetFocus
+      .SelStart = 0
+      .SelLength = Len(.Value)
+    End With
+    GoTo lbl_Exit
+  End If
+
+  '''''''''''''''''''''''''''''''''''''''''
+  'Ensure listbox contains at least 1 value.
+  '''''''''''''''''''''''''''''''''''''''''
+  If lstDDValues.ListCount < 1 Then lblDDUserInfo.Caption = "Add drop-down values.": GoTo lbl_Exit
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If an existing variable is being edited then confirm that the variable name in the form
+  'is either equal to the original variable name (i.e. the user hasn't changed it), or it is
+  'unique (i.e. the newly typed variable name doesn't match any existing names).
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If m_CurrentAction = EditSelected Then
+
+    ''''''''''''''''''''''''''''''''''''''''''''
+    'Compare the edited name in the form to the
+    'current variable name in the document.
+    ''''''''''''''''''''''''''''''''''''''''''''
+    If strDDName <> m_appCC.PlaceholderText Then
+
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'User has changed the name of the variable being edited.
+      'Make sure new name is unique.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      Set oCCs = m_oDoc.SelectContentControlsByTitle("DD: " & strDDName)
+
+      If oCCs.Count > 0 Then
+      ''''''''''''''''''
+      'Name isn't unique.
+      ''''''''''''''''''
+        With lblDDUserInfo
+          .Caption = "Naming conflict: you have changed the name of the variable being edited to the " & _
+                     "name of an existing variable. Change the name back to the original or try another name. "
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'If there are multiple DD variables with the same name then
+          'append a warning to reinforce that changes will be applied across
+          'all variables sharing the same name. This is initially indicated
+          'if the string "(multiple)" is appended to the variable name in
+          'the DDUserInfo label.
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          If m_bMultipleDDs = True Then
+            .Caption = .Caption & "Changes will be applied to all Drop-Down variables with the same name. " & _
+                                  "Click Cancel to quit."
+          End If
+        End With
+
+        With txtDDName
+          .SetFocus
+          .SelStart = 0
+          .SelLength = Len(.Value)
+        End With
+
+        GoTo lbl_Exit
+
+      End If
+
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'User has changed the name of the variable being edited in the form to a new
+      'unique name. Delete the original document variable description if it exists.
+      'Writing an empty string to the existing variable will delete it (use m_appCC
+      'in case the user has selected another user variable while the form is active
+      '(which would change p_appCC).
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      m_oDoc.Variables(m_appCC.Title).Value = ""
+
+    End If
+
+    '''''''''''''''''''
+    'EDIT the variable:
+    '''''''''''''''''''
+
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'User is editing an existing variable and hasn't made any changes to the variable name
+    'in the form. Write/edit/delete the document variable description. The current variable
+    'description will be written to the document variable's value wether it currently has been
+    'added, edited, or deleted (blank description) - this seems easier than writing more code
+    'to determine a change.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    m_oDoc.Variables("DD: " & strDDName).Value = strDDDescription
+
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Get the collection of all Combo Box CCs sharing the same .Title property.
+    'If the .Title property of the edited CC is shared by multiple CC user
+    'variables, then the edited drop down entries must be applied to all document
+    'CCs that share the same title. This is required to ensure that all CC user
+    'variables with the same name have identical properties.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Set oCCs = m_oDoc.SelectContentControlsByTitle(m_appCC.Title)
+
+    'Change the properties of the selected CC and all duplicates.
+    TurnOffFunctionality
+    For Each oCC In oCCs
+      With oCC
+        .LockContentControl = False
+        .LockContents = False
+        .Title = "DD: " & strDDName
+        .SetPlaceholderText Text:=strDDName
+        .Range.Text = .PlaceholderText
+        ''''''''''''''''''''''''''''''''''''''''''''''''
+        'Clear existing values and write new drop down
+        'values into the Combo Box Content Control.
+        ''''''''''''''''''''''''''''''''''''''''''''''''
+        .DropdownListEntries.Clear
+        For i = 0 To lstDDValues.ListCount - 1
+          .DropdownListEntries.Add lstDDValues.List(i, 1)
+        Next i
+        .LockContents = True
+        .LockContentControl = True
+      End With
+    Next oCC
+    TurnOnFunctionality
+
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'At this point the CCs drop-down list should be inaccessible to the user since its contents
+    'have been locked, however, the drop-down list of the final CC to be processed will remain
+    'accessible immediately after an edit action (in a collection of one then this will be the CC
+    'selected for editing). The contents of the final CC to be processed will remain accessible if
+    'the user immediately navigates to other CC user variables. It will only become inaccessible
+    'when the user exits a CC (any CC) immediately to the right of the CC or alternatively into a
+    'blank paragraph. The reason for this is a condition in the CC Exit event:
+    '
+    'If Selection.Text = Chr(13) Or Selection.Range.Start = .Range.End + 1 Then Selection.Font.Reset
+    '
+    'Satisfying the above condition in the CC Exit event causes a selection font reset which presumably
+    'accomplishes some type of screen refresh - regardless, this action will truely lock the contents of
+    'the final CC to be processed.
+    '
+    'Avoid this by forcing a screen refresh immediately after an edit action:
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Application.ScreenRefresh
+
+    GoTo lbl_Unload
+    
+  End If
+  
+  ''''''''''''''''''
+  'ADD the variable:
+  ''''''''''''''''''
+  p_bAppInsert = True
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Test selection to ensure that variable won't be saved with paragraph mark.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If RangeNeedsAdjustment(m_oRngInitial) Then
+  
+    'Adjust range.
+    With m_oRngInitial
+      .InsertAfter " "
+      .End = .End - 1
+    End With
+    
+    'Add user variable CC.
+    Set oCC = m_oRngInitial.ContentControls.Add(3, m_oRngInitial) '3 wdContentControlComboBox
+    
+    'Remove adjustment.
+    Set oRng = m_oRngInitial.Paragraphs(m_oRngInitial.Paragraphs.Count).Range
+    With oRng
+      .End = .End - 1
+      .start = .End - 1
+      .Text = ""
+    End With
+    
+  Else
+  
+    'Add user variable CC. - no adjustment needed.
+    Set oCC = m_oRngInitial.ContentControls.Add(3, m_oRngInitial) '3 wdContentControlComboBox
+    
+  End If
+
+  If oCC Is Nothing Then
+    MsgBox "A problem was encountered while adding the variable.", vbOKOnly + vbInformation, "Variable not added"
+    GoTo lbl_Unload
+  End If
+
+  With oCC
+    .LockContentControl = False
+    .LockContents = False
+    oCC.Title = "DD: " & strDDName
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'PlaceHolderText reverts back to default "Click here to enter text."
+    'if set in the ContentControlAfterAdd event. Set here:
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    .SetPlaceholderText Text:=strDDName
+    .Range.Text = .PlaceholderText
+    '''''''''''''''''''''''''''''''''''''''''''''''''
+    'Write drop down values into CC's drop down list.
+    '''''''''''''''''''''''''''''''''''''''''''''''''
+    For i = 0 To lstDDValues.ListCount - 1
+      .DropdownListEntries.Add lstDDValues.List(i, 1)
+    Next i
+    '''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Write drop down description to document variable.
+    ' Doc variable name  = oCC.Title
+    ' Doc variable value = uf.DropDownDescription
+    '''''''''''''''''''''''''''''''''''''''''''''''''''
+    m_oDoc.Variables(.Title).Value = strDDDescription
+    .Range.NoProofing = True
+    .LockContents = True
+    .LockContentControl = True
+  End With
+
+lbl_Unload:
+  CustomUndo.EndCustomRecord
+  TurnOnFunctionality
+  p_bAppInsert = False
+  Unload Me
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'**********************************************************
+'Events
+'**********************************************************
+Private Sub txtDDName_Change()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'This event is only applicable when the user is adding a new DD variable
+'at the insertion point, or where the selected text doesn't equal any
+'existing variable names. Both other scenarios have been covered in other
+'procedures (i.e. where selected text equals an existing variable name prior to
+'Insert, or when editing an existing variable). For this particular circumstance
+'we need a method of detecting and handling an instance where the user types
+'in the name of an existing variable.
+'
+'This event procedure checks if the current DD variable name (txtDDName.Value)
+'represents any existing DD variables in the document (i.e. variables with
+'the current name already exist). If it finds a match then the user is given
+'two separate options:
+'1. Auto-populate the form based on the matching variable name.
+'2. Type a different variable name.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim strDDName As String
+Dim oCC As Word.ContentControl
+Dim oCCs As Word.ContentControls
+Dim arr(10) As String
+
+  If m_CurrentAction <> InsertNew Then GoTo lbl_Exit
+  
+  If Len(Trim(txtDDName.Value)) < 1 Then GoTo lbl_Exit
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  'Setup array of exempt controls incase required.
+  '''''''''''''''''''''''''''''''''''''''''''''''
+  arr(0) = "txtDDEdit"
+  arr(1) = "cmdCancelClear"
+  arr(2) = "cmdCancelEdit"
+  arr(3) = "fraVariableDetails"
+  arr(4) = "lblDDName"
+  arr(5) = "txtDDName"
+  arr(6) = "cmdAutoPopulate"
+  arr(7) = "fraInformation"
+  arr(8) = "lblDDUserInfo"
+  arr(9) = "lblDDDuplicateAlert"
+  arr(10) = "cmdCancel"
+
+  strDDName = "DD: " & Trim(txtDDName.Value)
+  '''''''''''''''''''''''''''''''''''''''''''
+  'Check if the user variable (Combo Box CC)
+  'already exists. If not, handle error.
+  '''''''''''''''''''''''''''''''''''''''''''
+  On Error Resume Next
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'NOTE - consider restructuring so that work can be done inside
+  '       the error handler as opposed to during the procedure.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+  Set oCC = m_oDoc.SelectContentControlsByTitle(strDDName).Item(1)
+  
+  If Err.Number = 5941 Then
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Note: error 5941 The requested member of the collection
+    '      does not exist. Variable doesn't exist.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    On Error GoTo lbl_Exit
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If required: re-enable required controls, re-hide/disable
+    'auto-pop command button specifically and clear user info.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Call modSupport.EnableControls(Me, True, Array("txtDDEdit", "cmdCancelClear", "cmdCancelEdit"))
+    
+    With cmdAutoPopulate
+      .Enabled = False
+      .Visible = False
+    End With
+    
+    lblDDUserInfo.Caption = ""
+    
+    GoTo lbl_Exit
+    
+  End If
+  
+  On Error GoTo lbl_Exit
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If execution has gotten here then the variable name in txtDDName
+  'matches an existing DD variable name. Disable all required
+  'controls while name matches existing and display auto-pop
+  'command button.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Call modSupport.EnableControls(Me, False, arr())
+  
+  With cmdAutoPopulate
+    .Enabled = True
+    .Visible = True
+  End With
+  
+  lblDDUserInfo.Caption = "You have typed the name of an existing DD variable. If you want to " & _
+                          "insert the existing variable then click the lightning symbol to " & _
+                          "fill the form then click OK. Otherwise, type a unique name."
+  
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub txtDDDescription_Enter()
+  With txtDDDescription
+    .SelStart = 0
+    .SelLength = 0
+  End With
+End Sub
+
+Private Sub txtDDValue_Enter()
+'Make add button the default.
+  cmdAddDDValue.Default = True
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub txtDDValue_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+'Reset txtDDValue_Enter.
+  cmdAddDDValue.Default = False
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub lstDDValues_Enter()
+  If lstDDValues.ListCount > 0 Then
+    'Make edit button the default.
+    cmdEditDDValue.Default = True
+    'Select first item on entry.
+    lstDDValues.ListIndex = 0
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub lstDDValues_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+'Reset lstDDValues_Enter.
+  cmdEditDDValue.Default = False
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub txtDDEdit_Enter()
+'Make edit button default.
+  cmdEditDDValue.Default = True
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'**********************************************************
+'Support procedures
+'**********************************************************
+Private Sub PopulateUserform(Optional oCC As ContentControl)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to populate all userform information based on the properties of an exisitng
+'DD variable (Combo Box Content Control). If oCC parameter is missing/nothing then it
+'is assumed that a new variable is being added and the userform is populated to reflect this.
+'
+'Parameter:
+'----------
+'oCC    Userform to be populated based on this parameter (if supplied).
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCCs As Word.ContentControls 'For holding a collection of CCs.
+Dim strEditType As String        'Used when displaying the editing/duplicate alert (can be 'multiple' or 'single').
+Dim strDDName As String          'Name of Drop-Down variable (if based on existing).
+Dim strDDDescription As String   'Description (if based on existing).
+Dim i As Long                    'For looping through CC drop-down list entries.
+Dim arr(4) As String             'Array to hold control names.
+  
+  On Error GoTo err_Handler
+  
+  If oCC Is Nothing Then
+    ''''''''''''''''''''''''''
+    'POPULATE BASED ON NEW
+    ''''''''''''''''''''''''''
+    
+    ''''''''''''''''''''''''''''''''''''''''''''
+    'Get variable name & value:
+    'Either equal to selected text or left blank.
+    ''''''''''''''''''''''''''''''''''''''''''''
+    If Selection.Range.start <> Selection.Range.End Then
+      strDDName = Left(Trim(Replace(Selection.Text, Chr(13), "")), 32)
+    End If
+    
+  ''''''''''''''''''''''''''''''
+  'Get variable description - blank.
+  ''''''''''''''''''''''''''''''
+    strDDDescription = ""
+    
+  Else
+    '''''''''''''''''''''''''''''''
+    'POPULATE BASED ON EXISTING
+    '''''''''''''''''''''''''''''''
+    
+    With oCC
+    '''''''''''''''''''''''''
+    'Get variable name:
+    'equals existing variable name.
+    '''''''''''''''''''''''''
+      strDDName = .PlaceholderText
+      
+    ''''''''''''''''''''''''''''''''''''''''''''
+    'Get variable description:
+    'equal to the existing description of the CC user
+    'variable (if it exists) stored in a document variable.
+    ''''''''''''''''''''''''''''''''''''''''''''
+      strDDDescription = m_oDoc.Variables(.Title).Value
+  
+    '''''''''''''''''''''''''
+    'Get variable values:
+    'equal to the drop down list entries
+    'of the existing CC user variable.
+    '''''''''''''''''''''''''
+      lstDDValues.Clear
+      For i = 1 To .DropdownListEntries.Count
+        With lstDDValues
+          .AddItem
+          .List(i - 1, 0) = i
+          .List(i - 1, 1) = oCC.DropdownListEntries(i)
+        End With
+      Next i
+      
+    End With
+    
+  End If
+  
+  ''''''''''''''''''''''''''''
+  'Populate Userform
+  ''''''''''''''''''''''''''''
+  
+  'Variable Name
+  With txtDDName
+    .SetFocus
+    .Value = strDDName
+    .SelStart = 0
+    .SelLength = Len(.Value)
+  End With
+  
+  'Variable Description
+  txtDDDescription.Value = strDDDescription
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Carry out some additional actions based on the CurrentAction.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If m_CurrentAction = EditSelected Then
+  
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Display editing/duplicate alert if applicable. The duplicate alert is applicable
+    'if the selected DD variable we are editing has multiple duplicates.
+    '
+    '
+    'Determine if selected has multiple duplicates:
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Set oCCs = m_oDoc.SelectContentControlsByTitle(oCC.Title)
+    
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Determine correct message to append to the editing/duplicate
+    'alert and set m_bMultipleDDs if appropriate.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If oCCs.Count > 1 Then
+      strEditType = "(multiple)"
+      m_bMultipleDDs = True
+    End If
+  
+    With oCC
+      lblDDDuplicateAlert = "EDITING:  " & Right(.Title, (Len(.Title) - 4)) & "  " & strEditType
+    End With
+    
+      
+  ElseIf m_CurrentAction = InsertDuplicate Then
+  
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If the userform has been populated based on an existing CC, this doesn't necessarily mean that oCC
+    'is equal to p_appCC. If the users selected text matches an existing DD variable then the UF will be
+    'populated based on that existing variable despite the fact that p_appCC is Nothing. In this case, we
+    'want to disable all required UF controls and allow an 'OK' action only. The whole point in dbl-clicking/selecting
+    'text and inserting a DD variable is either to add a new totally unique variable or add a duplicate, in which
+    'case, no editing would be expected in the UF.
+    '
+    'Duplicate being added. Setup array of exempt control names for disable action.
+    'Only allow an 'OK' or 'Cancel' action.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    arr(0) = "cmdOK"
+    arr(1) = "cmdCancel"
+    arr(2) = "fraInformation"
+    arr(3) = "lblDDUserInfo"
+    arr(4) = "lblDDDuplicateAlert"
+    '''''''''''''''''''''''''''''
+    'Disable required controls.
+    '''''''''''''''''''''''''''''
+    Call modSupport.EnableControls(Me, False, arr())
+    '''''''''''''''''''''''''''''
+    'Display user message.
+    '''''''''''''''''''''''''''''
+    lblDDUserInfo.Caption = "Selected text is equal to an existing DD variable name. " & _
+                            "Click OK to add a duplicate or Cancel to quit."
+                              
+  End If
+  
+lbl_Exit:
+  Exit Sub
+  
+err_Handler:
+
+  If Err.Number = 5825 Then
+  
+    Resume Next
+    
+  Else
+
+    Debug.Print "Error in ufDropDown.PopulateUserform(optional oCC as ContentControl)" & vbCr & _
+                 Err.Number & " " & Err.Description & vbCr
+    
+    Resume lbl_Exit
+  
+  End If
+End Sub
+
+Private Sub ShowTxtDDEdit()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Shows hidden textbox txtDDEdit to allow editing of an existing item in lstDDValues.
+'Writes existing item in lstDDValues into txtDDEdit for editing.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+  '''''''''''''''''''''''''''''''''
+  'Hide listbox, buttons and labels.
+  '''''''''''''''''''''''''''''''''
+  With lstDDValues
+    .Enabled = False
+    .Visible = False
+  End With
+  txtDDName.Enabled = False
+  txtDDDescription.Enabled = False
+  cmdAddFromDoc.Enabled = False
+  txtDDValue.Enabled = False
+  cmdAddDDValue.Enabled = False
+  lblDDItem.Visible = False
+  lblDDValue2.Visible = False
+  cmdOK.Enabled = False
+  '''''''''''''''''''''''''''
+  'Disable buttons + spinner.
+  '''''''''''''''''''''''''''
+  cmdRemoveDDValue.Enabled = False
+  spinDDValues.Enabled = False
+  lblMoveItem.Enabled = False
+  cmdClearDDValues.Enabled = False
+  '''''''''''''''''''''''''''
+  'Show Cancel edit button.
+  '''''''''''''''''''''''''''
+  With cmdCancelEdit
+    .Left = cmdEditDDValue.Left + cmdEditDDValue.Width + 6.75
+    .Top = cmdEditDDValue.Top
+    .Enabled = True
+    .Visible = True
+  End With
+  '''''''''''''''''''''''''''
+  'Maximise & show txtDDEdit.
+  '''''''''''''''''''''''''''
+  With txtDDEdit
+    .Enabled = True
+    .Visible = True
+    .Font.Size = 10
+  '''''''''''''''''''''''''''''''''
+  'Display chosen item from listbox.
+  '''''''''''''''''''''''''''''''''
+    .Value = lstDDValues.List(lstDDValues.ListIndex, 1)
+    .SetFocus
+    .SelStart = Len(.Value)
+  End With
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub HideTxtDDEdit(Optional bUpdate As Boolean = True)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Hides textbox txtDDEdit after editing. Redisplays lstDDValues for normal operation.
+'Writes the edited item back into lstDDValues (dependant on parameter bUpdate).
+'
+'Parameter:
+'----------
+'bUpdate    Controls whether or not the edited item is written back into
+'           lstDDValues or is left unchanged.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+  '''''''''''''''''''''''''''''''''''
+  'Show listbox, buttons and labels.
+  '''''''''''''''''''''''''''''''''''
+  With lstDDValues
+    .Enabled = True
+    .Visible = True
+  End With
+  txtDDName.Enabled = True
+  txtDDDescription.Enabled = True
+  cmdAddFromDoc.Enabled = True
+  txtDDValue.Enabled = True
+  cmdAddDDValue.Enabled = True
+  lblDDItem.Visible = True
+  lblDDValue2.Visible = True
+  cmdOK.Enabled = True
+  
+  '''''''''''''''''''''''''
+  'Enable buttons + spinner.
+  '''''''''''''''''''''''''
+  cmdRemoveDDValue.Enabled = True
+  spinDDValues.Enabled = True
+  lblMoveItem.Enabled = True
+  cmdClearDDValues.Enabled = True
+  cmdCancelClear.Visible = True
+  '''''''''''''''''''''''''
+  'Hide Cancel edit button.
+  '''''''''''''''''''''''''
+  With cmdCancelEdit
+    .Left = 7
+    .Top = 230
+    .Enabled = False
+    .Visible = False
+  End With
+  '''''''''''''''''''''''''
+  'Minimise & hide txtDDEdit.
+  '''''''''''''''''''''''''
+  With txtDDEdit
+    .Enabled = False
+    .Visible = False
+  '''''''''''''''''''''''''''''''''''
+  'Update item in listbox if required.
+  '''''''''''''''''''''''''''''''''''
+    If bUpdate Then
+      lstDDValues.List(lstDDValues.ListIndex, 1) = .Value
+      RenumberListbox
+    End If
+    .Value = ""
+  End With
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub ClearAndSetFocus()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Sets txtDDValue to empty string and makes it the focus.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With txtDDValue
+    .Value = ""
+    .SetFocus
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub RenumberListbox()
+'''''''''''''''''''''''''''''''''''''''''''''
+'Renumbers the items in listbox lstDDValues.
+'''''''''''''''''''''''''''''''''''''''''''''
+Dim i As Long
+  With lstDDValues
+    For i = 1 To .ListCount
+      .List(i - 1, 0) = i
+    Next i
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Function IsSelSuitableForDD() As Boolean
+Dim arr(3) As String
+Dim i As Long
+
+  arr(0) = "^n" 'Column break
+  arr(1) = "^l" 'Manual line break
+  arr(2) = "^m" 'Manual page break
+  arr(3) = "^b" 'Section break
+
+  '''''''''''''''''''''''''''
+  'Ensure a normal selection.
+  'wdSelectionNormal - 2
+  '''''''''''''''''''''''''''
+  With Selection
+    If .Type <> 2 Then
+      GoTo lbl_Exit
+    End If
+  End With
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure selection doesn't contain multiple paragraphs.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If Selection.Paragraphs.Count > 1 Then
+    GoTo lbl_Exit
+  End If
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure selection doesn't contain any breaks or tabs.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''
+  For i = LBound(arr) To UBound(arr)
+    With Selection.Find
+      .Text = arr(i)
+      .Execute
+      If .Found Then GoTo lbl_Exit
+    End With
+  Next i
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Ensure string is not a consecutive group of space characters.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If Len(Trim(Selection.Text)) = 0 Then
+    GoTo lbl_Exit
+  End If
+  
+  '''''''''''''''''''''''''''''''''''''''
+  'Ensure selection isn't paragraph mark.
+  '''''''''''''''''''''''''''''''''''''''
+  If Len(Trim(Selection.Text)) = 1 Then
+    If Right(Selection.Text, 1) = Chr(13) Then
+      GoTo lbl_Exit
+    End If
+  End If
+  
+  IsSelSuitableForDD = True
+  
+lbl_Exit:
+  Exit Function
+End Function
+
+'**********************************************************
+'Cancel / Close
+'**********************************************************
+Private Sub cmdCancel_Click()
+
+'  With Me
+'    .CancelClose = True
+'    .Hide
+'  End With
+
+  Unload Me
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'QueryClose only required if ufDropDown is changed back to being modal.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+'Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+'  If CloseMode = 0 Then
+'    Cancel = True
+'    With Me
+'      .CancelClose = True
+'    End With
+'  End If
+'lbl_Exit:
+'  Exit Sub
+'End Sub
+
+'**********************************************************
+'Public properties
+'**********************************************************
+Public Property Get MultipleDDs() As Boolean
+  MultipleDDs = m_bMultipleDDs
+End Property
+
+Public Property Let MultipleDDs(ByVal bMultipleDDs As Boolean)
+  m_bMultipleDDs = bMultipleDDs
+End Property
+
+'Public Property Get CancelClose() As Boolean
+'  CancelClose = m_bCancelClose
+'End Property
+'
+'Public Property Let CancelClose(bCancelClose As Boolean)
+'  m_bCancelClose = bCancelClose
+'End Property
+'
+'Public Property Get DropDownName() As String
+'  DropDownName = m_strDDName
+'End Property
+'
+'Public Property Let DropDownName(ByVal strDDName As String)
+'  m_strDDName = strDDName
+'End Property
+'
+'Public Property Get DropDownDescription() As String
+'  DropDownDescription = m_strDDDescription
+'End Property
+'
+'Public Property Let DropDownDescription(ByVal strDDDescription As String)
+'  m_strDDDescription = strDDDescription
+'End Property
+'
+'Public Property Get DropDownValues() As Variant
+'  DropDownValues = m_arrDDValues
+'End Property
+'
+'Public Property Let DropDownValues(ByVal arrDDValues As Variant)
+'  m_arrDDValues = arrDDValues
+'End Property
+
+
+
+
+
+
+
+

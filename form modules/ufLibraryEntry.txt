@@ -1,0 +1,436 @@
+VERSION 5.00
+Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} ufLibraryEntry 
+   Caption         =   "Enter Library Entry variable name (32 characters max)"
+   ClientHeight    =   2715
+   ClientLeft      =   120
+   ClientTop       =   465
+   ClientWidth     =   5940
+   OleObjectBlob   =   "ufLibraryEntry.frx":0000
+   StartUpPosition =   1  'CenterOwner
+End
+Attribute VB_Name = "ufLibraryEntry"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Option Explicit
+
+'Userform properties.
+Private m_strLibraryEntryName As String           'UF property for storing Library Entry variable name.
+Private m_strLibraryEntryDescription As String    'UF property for storing drop down description.
+Private m_bCancelClose As Boolean                 'UF property: True if the form has been cancelled or closed (Cancel or  X).
+Private m_bKeepSelection As Boolean               'UF property: True if the user has chosen to leave the selection untouched
+                                                  'as opposed to replacing the entire selection with the variable name.
+Private Sub UserForm_Initialize()
+ '''''''''''''''''''''''''''''''''''''''
+'Procedure to initialize ufLibraryEntry.
+'''''''''''''''''''''''''''''''''''''''
+Dim oCCs As Word.ContentControls
+Dim strValue As String
+
+  On Error GoTo err_Handler
+  
+  'Set userform dimensions
+  With Me
+    .Height = 165
+    .Width = 309
+  End With
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If p_appCC has been allocated then we are editing an existing variable.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+  If Not p_appCC Is Nothing Then
+    '''''''''''''''''''
+    'Edit existing.
+    '''''''''''''''''''
+    Me.Tag = "Edit"
+  
+    ''''''''''''''''''''''''''''''''''''''''''''''
+    'Populate userform based on existing variable.
+    ''''''''''''''''''''''''''''''''''''''''''''''
+    Call PopulateUserform(p_appCC)
+    
+    
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If the current value of the variable (the range text of the CC) is not equal to the
+    'variable name, then display a CheckBox to allow the user to keep the current value
+    'after editing the variable's name. If this CheckBox isn't selected then the current
+    'value of the variable will change to the newly edited variable name. The user may be
+    'editing a master document and would like to keep a block of text as a placeholder as
+    'opposed to changing the block to a variable name like "Lib 4" etc.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If Me.txtLEName.Value = p_appCC.Range.Text And p_appCC.Range.InlineShapes.Count = 0 Then
+    
+      ''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Name equals range text - remove checkbox options.
+      ''''''''''''''''''''''''''''''''''''''''''''''''''
+      Call RemoveCheckBox
+      
+    Else
+    
+      '''''''''''''''''''''''''''''''
+      'Name doesn't equal range text.
+      '''''''''''''''''''''''''''''''
+      Me.chkKeepSelection.Value = True
+
+    End If
+    
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Determine if multiple LE variables with the same name exist, if so,
+    'show hidden label informing the user that all LE variables sharing
+    'the same name will be affected by any change.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Set oCCs = p_appCC.Range.Document.SelectContentControlsByTitle(p_appCC.Title)
+    If oCCs.Count > 1 Then Me.lblMultiple.Visible = True
+    
+    GoTo lbl_Exit
+    
+  Else
+    '''''''''''''''''''
+    'Adding new.
+    '''''''''''''''''''
+    Me.Tag = "Add"
+    
+    If Selection.Range.start <> Selection.Range.End Then
+      ''''''''''''''''''''''
+      'A range is selected.
+      ''''''''''''''''''''''
+      
+      If Len(Selection.Range) <= 32 Then
+        
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'The range is less than 32 characters long. In this case, assume that
+        'the selected text will become the variable name. Display the selected
+        'text as the variable name.
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        strValue = (Trim(Replace(Selection.Text, Chr(13), "")))
+      
+      Else
+        ''''''''''''''''''''''''''''''''''''''''''''''''
+        'The range is greater than 32 characters long.
+        'Leave the variable name blank.
+        ''''''''''''''''''''''''''''''''''''''''''''''''
+        strValue = ""
+      
+      End If
+      
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'If the non-printeing control character has been appended then the
+      'user selected an inline shape in one of the hdr/ftr stories.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      If Right(strValue, 1) = Chr(4) Then strValue = "*img"
+      
+      Me.chkKeepSelection.Value = True
+      
+    Else
+    
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Selection is insertion point so CheckBox isn't required.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      Call RemoveCheckBox
+         
+    End If
+  
+    ''''''''''''''''''''''''''
+    'Change textbox properties.
+    ''''''''''''''''''''''''''
+    With Me.txtLEName
+      .SetFocus
+      .Value = strValue
+      .SelStart = 0
+      .SelLength = Len(.Value)
+    End With
+  
+  End If
+    
+lbl_Exit:
+  Exit Sub
+  
+err_Handler:
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If the start of the selection contains a table and the first cell is empty,
+  'then trying to set txtLEName.Value = strValue throws the follwing error:
+  'Error -2147467259 - Could not set the Value property. Unspecified error.
+  'Presumably because it can't display empty table content.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If Err.Number <> -2147467259 Then
+    Debug.Print "Error in ufLibraryEntry.Userform_Initialize" & vbCr & _
+                 Err.Number & " " & Err.Description & vbCr
+  End If
+               
+  Resume lbl_Exit
+  
+End Sub
+
+'**********************************************************
+'General controls
+'**********************************************************
+Private Sub txtLEName_Change()
+
+  If p_appCC Is Nothing Then
+  
+    Me.Caption = "Enter Library Entry variable name (32 characters max)"
+  
+  Else
+  
+    Me.Caption = "Editing Library Entry variable"
+  
+  End If
+
+End Sub
+
+Private Sub chkKeepSelection_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Click event for dual purpose CheckBox. This CheckBox is used to:
+'
+' 1. Keep/discard the user's selected text when adding a LE variable.
+' 2. Keep/discard the current value (text) of an LE variable which is being edited.
+'
+'The control captions for each of the CheckBox purposes are 'Keep selected text' and
+''Keep current variable text'. A description of each of each of the options will be
+'displayed to the user via a label control (lblMsg). Each of the label descriptions are
+'stored in the form as hard coded label values.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+  '''''''''''''''''''''''''''''''''''''''''''
+  'Store the checkbox value as a UF property.
+  '''''''''''''''''''''''''''''''''''''''''''
+  Me.KeepSelection = Me.chkKeepSelection.Value
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Display the appropriate lblMsg which describes the CheckBox options.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me.chkKeepSelection
+  
+    If Me.Tag = "Add" Then
+    
+      If .Value = True Then
+      
+        Me.lblMsg.Caption = Me.lbl_KeepSelectedText_True.Caption
+      
+      Else
+      
+        Me.lblMsg.Caption = Me.lbl_KeepSelectedText_False.Caption
+      
+      End If
+    
+    Else 'Me.Tag = "Edit"
+    
+      If .Value = True Then
+      
+        Me.lblMsg.Caption = Me.lbl_KeepVariableText_True.Caption
+      
+      Else
+      
+        Me.lblMsg.Caption = Me.lbl_KeepVariableText_False.Caption
+      
+      End If
+    
+    End If
+  
+  End With
+  
+End Sub
+
+Private Sub cmdOK_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to validate the form and set its properties.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim strLEName As String
+Dim strLEDescription As String
+
+  strLEName = Trim(txtLEName.Value)
+  strLEDescription = Trim(txtLEDescription.Value)
+  
+  ''''''''''''''''''''''''''''''''''''''
+  'Ensure the user has named the variable.
+  ''''''''''''''''''''''''''''''''''''''
+  If Len(strLEName) < 1 Then
+    With Me
+      .Caption = "Variable name can't be blank."
+      .txtLEName.SetFocus
+    End With
+    GoTo lbl_Exit
+  End If
+  
+  '''''''''''''''''''''''''''''''''''''
+  'Set the userform public properties.
+  '''''''''''''''''''''''''''''''''''''
+  With Me
+    .LibraryEntryName = strLEName
+    .LibraryEntryDescription = strLEDescription
+    .Hide
+  End With
+    
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'**********************************************************
+'Support procedures
+'**********************************************************
+Private Sub PopulateUserform(oCC As ContentControl)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to populate all userform information based on the properties of an exisitng
+'LE variable (Rich Text Content Control).
+'
+'Parameter:
+'----------
+'oCC    Userform to be populated based on the currently selected CC (p_appCC).
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim strLEName As String          'Name of Drop-Down variable (if based on existing).
+Dim strLEDescription As String   'Description (if based on existing).
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'NOTE: we don't really need the parameter oCC. If this procedure is active then
+  '      p_appCC has been allocated so we could use that.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+  On Error GoTo err_Handler
+  
+  '''''''''''''''''''''''''''''''''''''''''
+  'Get existing user variable CC properties.
+  '''''''''''''''''''''''''''''''''''''''''
+  
+  With oCC
+    
+    '''''''''''''''''''''''''
+    'Get variable name:
+    'equals existing variable name.
+    '''''''''''''''''''''''''
+    strLEName = .PlaceholderText
+    
+    ''''''''''''''''''''''''''''''''''''''''''''
+    'Get variable description:
+    'equal to the existing description of the CC user
+    'variable (if it exists) stored in a document variable.
+    ''''''''''''''''''''''''''''''''''''''''''''
+    strLEDescription = .Range.Document.Variables(.Title).Value
+    
+  End With
+    
+  ''''''''''''''''''''''''''''
+  'Populate the Userform.
+  ''''''''''''''''''''''''''''
+  
+  With Me
+  
+    ''''''''''''''''''''''
+    'Userform caption.
+    ''''''''''''''''''''''
+    .Caption = "Edit Library Entry variable."
+  
+    ''''''''''''''''''''''
+    'Textbox variable name.
+    ''''''''''''''''''''''
+    With .txtLEName
+      .Value = strLEName
+      .SetFocus
+    End With
+    
+    ''''''''''''''''''''''''''''''
+    'Textbox variable description.
+    ''''''''''''''''''''''''''''''
+    .txtLEDescription.Value = strLEDescription
+    
+  End With
+  
+  
+lbl_Exit:
+  Exit Sub
+  
+err_Handler:
+
+  If Err.Number = 5825 Then
+    
+    Resume Next
+  
+  Else
+
+    Debug.Print "Error in ufLibraryEntry.PopulateUserform(oCC as ContentControl)" & vbCr & _
+                 Err.Number & " " & Err.Description & vbCr
+    
+    Resume lbl_Exit
+  
+  End If
+End Sub
+
+Sub RemoveCheckBox()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to remove the checkbox and resize the form.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me.chkKeepSelection
+    .Visible = False
+    .Enabled = False
+  End With
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'**********************************************************
+'Cancel / Close
+'**********************************************************
+Private Sub cmdCancel_Click()
+  With Me
+    .CancelClose = True
+    .Hide
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+  If CloseMode = 0 Then
+    Cancel = True
+    With Me
+      .CancelClose = True
+      .Hide
+    End With
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Public properties
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Public Property Get LibraryEntryName() As String
+  LibraryEntryName = m_strLibraryEntryName
+End Property
+
+Public Property Let LibraryEntryName(ByVal strName As String)
+  m_strLibraryEntryName = strName
+End Property
+
+Public Property Get LibraryEntryDescription() As String
+  LibraryEntryDescription = m_strLibraryEntryDescription
+End Property
+
+Public Property Let LibraryEntryDescription(ByVal strLibraryEntryDescription As String)
+  m_strLibraryEntryDescription = strLibraryEntryDescription
+End Property
+
+Public Property Get KeepSelection() As Boolean
+  KeepSelection = m_bKeepSelection
+End Property
+
+Public Property Let KeepSelection(ByVal bKeepSelection As Boolean)
+  m_bKeepSelection = bKeepSelection
+End Property
+
+Public Property Get CancelClose() As Boolean
+  CancelClose = m_bCancelClose
+End Property
+
+Public Property Let CancelClose(bCancelClose As Boolean)
+  m_bCancelClose = bCancelClose
+End Property
+
+
+
+
+

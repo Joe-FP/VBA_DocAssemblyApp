@@ -1,0 +1,1688 @@
+VERSION 5.00
+Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} ufGatheredVariables 
+   Caption         =   "***TEST VERSION*** EasyDoc V2.1 ------ Gathered variables"
+   ClientHeight    =   14850
+   ClientLeft      =   120
+   ClientTop       =   465
+   ClientWidth     =   22560
+   OleObjectBlob   =   "ufGatheredVariables.frx":0000
+   StartUpPosition =   1  'CenterOwner
+End
+Attribute VB_Name = "ufGatheredVariables"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Option Explicit
+Option Base 1
+
+Private WithEvents BBTree As clsTreeView
+Attribute BBTree.VB_VarHelpID = -1
+
+'Userform properties
+Private m_strControlID As String    'Holds a unique ID which allows ctrl to be re-selected after Library usage.
+Private m_bCancelClose As Boolean   'True if the form has been cancelled or closed by the user (Cancel or  X).
+
+'Private variables
+Private m_arrRuntimeControls() As New clsRuntimeControlEvents   'Array to store a class object for each dynamic non-label control on the UF.
+
+'Private constants
+Private Const m_lngLblWidth As Long = 120       'Width of all label controls on multipage.
+Private Const m_lngCtrlWidth As Long = 200      'Width of all textbox & combobox controls on multipage.
+Private Const m_lngCtrlHeight As Long = 20      'Height of all controls on multipage.
+Private Const m_lngCtrlSpaceH As Long = 3.75    'The horizontal spacing between paired controls (i.e between lbl & txt / lbl & combo / combo & cmd).
+Private Const m_lngCtrlSpaceV As Long = 15      'The vertical spacing between labels.
+Private Const m_lngColumnSpacing As Long = 15   'The spacing between two columns of paired controls.
+Private Const m_lngLeftBorder As Long = 15      'The left starting position of column 1 when 2-no. columns are present.
+Private Const m_lngTopBorder As Long = 20       'The top starting position for the first label in column 1 or 2.
+Private Const m_lngMaxColCtrls As Long = 7      'The maximum number of paired controls allowed in one column.
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Stop CC events when ufGatherVariables is loaded. Start again when
+'the userform is unloaded. This is mainly to stop CC events firing
+'while the document is being populated with chosen data.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Private Sub UserForm_Initialize()
+  p_bSkipDocEvents = True
+End Sub
+
+Private Sub UserForm_Terminate()
+  p_bSkipDocEvents = False
+End Sub
+
+Private Sub UserForm_Activate()
+Dim oPages As MSForms.MultiPage
+Dim oPage As MSForms.Page
+Dim oLbl As MSForms.Label
+Dim oTxt As MSForms.TextBox
+Dim oCombo As MSForms.ComboBox
+Dim oCmd As MSForms.CommandButton
+Dim oCtrl As MSForms.Control
+Dim oCtrlLbl As MSForms.Control   'Represents a control (Label).
+Dim oCtrlCmd As MSForms.Control   'Represents a control (CommandButton).
+Dim oCC As ContentControl         'Target CC used for obtaining drop-down list items to populate userform control.
+Dim arrCCData() As String         'Set equal to an element of the master array (which holds all delimited CC data for a document).
+Dim strCCPHT As String            'CC PlaceHolderText - Token 2 of delimited CC data.
+Dim strCCRangeText As String      'CC.Range.Text - Token 3 of delimited CC data.
+Dim lngCCType As Long             'CC.Type - Token 4 of delimited CC data.
+Dim strCCTitle As String          'CC.Title - Token 5 of delimited CC data.
+Dim lngItem As Long               'For looping through CC drop down list entries.
+Dim lngCtrlCount As Long          'Running count of paired controls (i.e. lbl & txt or lbl & combo etc.)
+Dim lngNextLblTop As Long         'Defines the top position for the label being added.
+Dim lngColCtrlCount As Long       'Running count of paired controls per column.
+
+Dim lngLblLeft As Long            'Defines the left position for the next label to be added (lngLblLeft_Start/lngLblLeft_Col1/lngLblLeft_Col2).
+Dim lngLblLeft_Start As Long      'Defines the left position for labels in col 1 when only one column is needed.
+Dim lngLblLeft_Col1 As Long       'Defines the left position for labels in col 1 when two columns are present.
+Dim lngLblLeft_Col2 As Long       'Defines the left position for labels in col 2 when two columns are present.
+
+Dim lngWidth As Long              '
+
+Dim i As Long                     'For looping through the master array and keeping a count of run-time controls.
+Dim j As Long                     'For looping through arrays holding appCC data.
+
+  Call PrepareUserform
+  
+  lngCtrlCount = 0
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'When only a single column of paired controls exist, the label controls will be positioned further right
+  'in the form in order to centralize the control pairs on the page. The left starting position for a single
+  'column of controls is lngLblLeft_Start.
+  
+  'When column 1 has been filled and a second column is required, the left starting position for column 1 will be
+  'shifted left to m_lngLeftBorder to accomodate the second column.
+
+  'A second column is required when the current number of control pairs (lngColCtrlCount) is equal to the allowed
+  'number of column control pairs (m_lngColCtrlCount).
+  
+  'Calculate all left values:
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  lngLblLeft_Start = (MultiPage1.Width / 2) - (m_lngLblWidth + m_lngCtrlSpaceH + (m_lngCtrlWidth / 2))
+  lngLblLeft_Col1 = m_lngLeftBorder
+  lngLblLeft_Col2 = m_lngLeftBorder + m_lngLblWidth + (m_lngCtrlSpaceH * 2) + m_lngCtrlWidth + 20 + m_lngColumnSpacing
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Each element in the master array is a string array related to a different document.
+  'Each string array holds delimited data for all CCs in that document.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  For i = LBound(p_arrMaster) To UBound(p_arrMaster)
+
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Set string array equal to element i of master array.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''
+    arrCCData() = p_arrMaster(i)
+
+    ''''''''''''''''''''''''''''
+    'New page for each document.
+    ''''''''''''''''''''''''''''
+    Set oPage = MultiPage1.Pages.Add
+
+    With oPage
+      ''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Make the page tag equal to the full document name.
+      ''''''''''''''''''''''''''''''''''''''''''''''''''
+      .Tag = arrCCData(1)
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Make the page name equal the document name (minus the extension).
+      '
+      'arrCCData(1) holds the document name complete with extension.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      .Caption = WordBasic.FilenameInfo(arrCCData(1), 4)
+    End With
+    
+    '''''''''''''''''''''''''''''''''''''''
+    'Reset starting position for controls.
+    '''''''''''''''''''''''''''''''''''''''
+    lngLblLeft = lngLblLeft_Start
+    lngNextLblTop = m_lngTopBorder
+  
+    ''''''''''''''''''''''
+    'Reset column counter.
+    ''''''''''''''''''''''
+    lngColCtrlCount = 0
+    
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Loop through all stored CC data. Start from element 2, element 1 holds document name.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    For j = LBound(arrCCData) + 1 To UBound(arrCCData)
+
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'For each element in CC data array, separate out delimited CC data.
+                                                          'Token 0 - lngStoryTag
+                                                          'Token 1 - oCC.Range.Start
+      strCCPHT = Split(arrCCData(j), Chr(31))(2)          'Token 2 - oCC.PlaceholderText
+      strCCRangeText = Split(arrCCData(j), Chr(31))(3)    'Token 3 - oCC.Range.Text
+      lngCCType = CLng(Split(arrCCData(j), Chr(31))(4))   'Token 4 - oCC.Type
+      strCCTitle = Split(arrCCData(j), Chr(31))(5)        'Token 5 - oCC.Title
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'If the maximum number of paired controls per column has been reached then shift
+      'the existing control pairs to the left (lngLblLeft_Col1). If both columns have
+      'been filled then add a new page and reset the starting positions.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      If lngColCtrlCount = m_lngMaxColCtrls Then
+        
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'Column 1 has been filled. Shift the existing controls to the left.
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        For Each oCtrl In oPage.Controls
+          With oCtrl
+            Select Case TypeName(oCtrl)
+              Case "Label"
+                .Left = lngLblLeft_Col1
+              Case "TextBox", "ComboBox"
+                .Left = lngLblLeft_Col1 + m_lngLblWidth + m_lngCtrlSpaceH
+              Case "CommandButton"
+                .Left = lngLblLeft_Col1 + m_lngLblWidth + m_lngCtrlWidth + (m_lngCtrlSpaceH * 2)
+            End Select
+          End With
+        Next oCtrl
+        
+        ''''''''''''''''''''''''''''''''
+        'Set column 2 starting position.
+        ''''''''''''''''''''''''''''''''
+        lngLblLeft = lngLblLeft_Col2
+        lngNextLblTop = m_lngTopBorder
+        
+      ElseIf lngColCtrlCount = m_lngMaxColCtrls * 2 Then
+        ''''''''''''''''''''''''''
+        'Column 2 has been filled.
+        ''''''''''''''''''''''''''
+          
+        ''''''''''''''
+        'Add new page.
+        ''''''''''''''
+        Set oPage = Me.MultiPage1.Pages.Add
+        With oPage
+          .Tag = arrCCData(1)
+          .Caption = "cont.."
+        End With
+
+        '''''''''''''''''''''''''''''''''''''''
+        'Reset starting position for blank page.
+        '''''''''''''''''''''''''''''''''''''''
+        lngLblLeft = lngLblLeft_Start
+        lngNextLblTop = m_lngTopBorder
+      
+        ''''''''''''''''''''''
+        'Reset column counter.
+        ''''''''''''''''''''''
+        lngColCtrlCount = 0
+            
+      End If
+
+      ''''''''''''''''''
+      'Add label control.
+      ''''''''''''''''''
+      Set oCtrlLbl = oPage.Controls.Add("Forms.Label.1", "lbl_" & oPage.Index & j, True)
+
+      With oCtrlLbl
+        .Height = m_lngCtrlHeight
+        .Width = m_lngLblWidth
+        .Left = lngLblLeft
+        .Top = lngNextLblTop
+        ''''''''''''''''''''''''''''
+        'Set properties and populate.
+        ''''''''''''''''''''''''''''
+        Set oLbl = oCtrlLbl
+        With oLbl
+          .TextAlign = fmTextAlignRight
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'Display variable name in label control. The variable name
+          'is equal to the PlaceHolderText of the Content Control.
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          .Caption = strCCPHT
+          '.BorderStyle = fmBorderStyleSingle
+        End With
+        ''''''''''''''''''''''''''''''''''''
+        'Increment lngTop for next control.
+        ''''''''''''''''''''''''''''''''''''
+        lngNextLblTop = .Top + .Height + m_lngCtrlSpaceV
+      End With
+
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Add paired control. Paired control is dependant on CC type (token 4)
+      'and will be either a textbox or combobox control. Populate  paired
+      'control with data if required.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      Select Case lngCCType
+
+        Case 1
+        
+          '''''''''''''''''''''''''''''''''''
+          'ST variable - wdContentControlText
+          '''''''''''''''''''''''''''''''''''
+          Set oCtrl = oPage.Controls.Add("Forms.TextBox.1", "txtST_" & oPage.Index & j, True)
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'Populate the paired control if the CC user variable value (.Range.Text)
+          'is not equal to its name (.Placeholdertext) i.e. it is filled with data.
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          If strCCRangeText <> strCCPHT Then
+            Set oTxt = oCtrl
+            oTxt.Value = strCCRangeText
+          End If
+          
+        Case 3
+        
+          '''''''''''''''''''''''''''''''''''''''
+          'DD variable - wdContentControlComboBox
+          '''''''''''''''''''''''''''''''''''''''
+          Set oCtrl = oPage.Controls.Add("Forms.ComboBox.1", "comboDD_" & oPage.Index & j, True)
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'Populate drop-down and dynamically calculate the ComboBox ListWidth based on the largest DDL item.
+          'The minimum ListWidth is equal to the Private Const m_lngCtrlWidth (i.e. the width of all ComboBox
+          'controls). This allows the user to view larger list items.
+          '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+          lngWidth = m_lngCtrlWidth
+          Set oCombo = oCtrl
+          
+          With oCombo
+            
+            ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            'Turn AutoSize property on so that we can establish the largest
+            'DDL item in the ComboBox control from the loop below.
+            ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            .AutoSize = True
+            
+            '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            'Get a handle on the required ComboBox CC in the document.
+            '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            Set oCC = Documents(arrCCData(1)).SelectContentControlsByTitle(strCCTitle).Item(1)
+  
+            For lngItem = 1 To oCC.DropdownListEntries.Count
+              
+              ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+              'Loop through the DDL entries of the ComboBox CC. Add each
+              'DDL entry to a new item in the ComboBox UF control.
+              ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+              .AddItem oCC.DropdownListEntries(lngItem).Value
+              
+              '''''''''''''''''''''
+              'Select the new item.
+              '''''''''''''''''''''
+              .ListIndex = lngItem - 1
+              
+              ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+              'Compare the ComboBox width to the standard ctrl width.
+              ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+              If lngWidth < .Width Then
+              
+                lngWidth = .Width
+                
+              End If
+              
+            Next lngItem
+            
+            '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            'We have been selecting ComboBox values as they have been added.
+            'Reset the ComboBox value to an empty string. Also, set the ListWidth
+            'based on above and turn off the AutoSize property.
+            '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            .Value = ""
+            .ListWidth = lngWidth
+            .AutoSize = False
+            
+            '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            'Populate the userform control if the CC user variable value (.Range.Text)
+            'is not equal to its name (.Placeholdertext) i.e. it is filled with data.
+            '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            If strCCRangeText <> strCCPHT Then .Value = strCCRangeText
+          
+          End With
+          
+          
+        Case 0
+        
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''
+          'LE variable - wdContentControlRichText
+          ''''''''''''''''''''''''''''''''''''''''''''''''''''
+          Set oCtrl = oPage.Controls.Add("Forms.TextBox.1", "txtLE_" & oPage.Index & j, True)
+
+          Set oTxt = oCtrl
+          
+          oTxt.Locked = True
+
+      End Select
+      
+      '''''''''''''''''''''''''
+      'Position paired control.
+      '''''''''''''''''''''''''
+      With oCtrl
+        .Height = m_lngCtrlHeight
+        .Width = m_lngCtrlWidth
+        .Left = oCtrlLbl.Left + oCtrlLbl.Width + m_lngCtrlSpaceH
+        .Top = oCtrlLbl.Top - 2
+        .Tag = strCCTitle
+      End With
+      
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Library variables require a 3rd control - a commandbutton
+      'to access the hidden user library on the form.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      If lngCCType = 0 Then
+        
+        '''''''''''''''''''''''''
+        'Add the command button.
+        '''''''''''''''''''''''''
+        Set oCtrlCmd = oPage.Controls.Add("Forms.CommandButton.1", "cmdLE_" & oPage.Index & j, True)
+        
+        '''''''''''''''''''''''''
+        'Size & position it.
+        '''''''''''''''''''''''''
+        With oCtrlCmd
+          .Height = 20
+          .Width = 20
+          .Left = oCtrl.Left + oCtrl.Width + m_lngCtrlSpaceH
+          .Top = oCtrl.Top
+          .Tag = strCCTitle
+          .ControlTipText = "Click to display the Library."
+        End With
+        
+        '''''''''''''''''''''''''
+        'Load its picture.
+        '''''''''''''''''''''''''
+        Set oCmd = oCtrlCmd
+        oCmd.Picture = Me.cmdTargetPic.Picture
+      
+      End If
+      
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Track the total number of paired controls that require dynamically
+      'added event procedures. Library variables require an extra control
+      '(commandbutton) to load the hidden library in the form.
+      ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      If lngCCType = 0 Then
+        '''''''''''''''''''''''''''''''''''''''''''''
+        'LE variable requires two controls (txt & cmd).
+        '''''''''''''''''''''''''''''''''''''''''''''
+        lngCtrlCount = lngCtrlCount + 2
+      Else
+        '''''''''''''''''''''''''''''''''''''''''''''
+        'All others require one control (txt or combo).
+        '''''''''''''''''''''''''''''''''''''''''''''
+        lngCtrlCount = lngCtrlCount + 1
+      End If
+      
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Track the total number of paired controls per column.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''
+      lngColCtrlCount = lngColCtrlCount + 1
+
+    Next j
+
+  Next i
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'The userform is now completely populated with all the required controls.
+  '
+  'The first page in the MultiPage contains the Library and is hard-coded into
+  'the form. When the user clicks a commandbutton associated with a Library Entry
+  'variable the Library will be displayed. We want it to be displayed as the last
+  'page, so change its index value:
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me.MultiPage1
+    .Pages("EDUserLibrary").Index = .Pages.Count - 1
+  End With
+  
+  ''''''''''''''''''''''''''''''''''''
+  'Load the Library with user content.
+  ''''''''''''''''''''''''''''''''''''
+  Call BuildBBTree
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Create events for all dynamically added textbox,
+  'combobox and command button controls.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''
+  i = 1
+  ReDim m_arrRuntimeControls(lngCtrlCount)
+
+  For Each oPage In Me.MultiPage1.Pages
+    
+    '''''''''''''''''''''''''''
+    'Skip page holding Library.
+    '''''''''''''''''''''''''''
+    If oPage.Name = "EDUserLibrary" Then GoTo NextPage
+    
+    For Each oCtrl In oPage.Controls
+    
+      Select Case TypeName(oCtrl)
+        
+        Case "TextBox"
+        
+          Set m_arrRuntimeControls(i).oTextBox = oCtrl
+
+        Case "ComboBox"
+        
+          Set m_arrRuntimeControls(i).oComboBox = oCtrl
+          
+        Case "CommandButton"
+
+          Set m_arrRuntimeControls(i).oCommandButton = oCtrl
+          
+        Case Else
+        
+          GoTo NextControl
+          
+      End Select
+      
+      i = i + 1
+      
+NextControl:
+    Next oCtrl
+
+NextPage:
+  Next oPage
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Select the first page in the MultiPage before form is displayed.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Me.MultiPage1.Value = 0
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdClearVariables_Click()
+'''''''''''''''''''''''''''''''''''''
+'Click event to reveal Clear options.
+'''''''''''''''''''''''''''''''''''''
+Dim arr(2) As String
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'The following block of code is probably overkill. When cmdClearVariables is
+  'clicked to reveal the clear options, the following code block ensures that any
+  'further clicks of cmdClearVariables has no effect. The only effect it would
+  'have without it is to re-select the optClearPage option button if the other
+  'option button is selected instead (optClearForm).
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me.cmdClearVariables
+    If .Tag = "Clicked" Then
+      GoTo lbl_Exit
+    Else
+      .Tag = "Clicked"
+    End If
+  End With
+    
+  ''''''''''''''''''''''''''''
+  'Setup exempt control names.
+  ''''''''''''''''''''''''''''
+  arr(1) = "cmdClearVariables"
+  arr(2) = "lblLogoImage"
+
+  '''''''''''''''''''''''''''
+  'Disable all controls.
+  '''''''''''''''''''''''''''
+  Call modSupport.EnableControls(Me, False, arr)
+  
+  ''''''''''''''''''''''''''
+  'Enable required controls.
+  ''''''''''''''''''''''''''
+  With Me
+  
+    With .lblClearVariablesFrom
+      .Enabled = True
+      .Visible = True
+    End With
+  
+    With .optClearPage
+      .Enabled = True
+      .Visible = True
+      .Value = True
+    End With
+    
+    With .optClearForm
+      .Enabled = True
+      .Visible = True
+    End With
+    
+    With .cmdOkClear
+      .Enabled = True
+      .Visible = True
+    End With
+    
+    With .cmdCancelClear
+      .Enabled = True
+      .Visible = True
+      .SetFocus
+    End With
+    
+  End With
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdCancelClear_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Click event to cancel the Clear action and re-enable/re-hide required controls.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+  Call HideClearOptions
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdOkClear_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Click event confirms Clear action. Depending on the related option button selected, either:
+'
+'1. The page will be cleared, or
+'2. The entire form will be cleared.
+'
+'Clearing the page or the entire form will hide previously highlighted empty variables in the form,
+'i.e. the function carried out by the ShowEmptyVariables commandbutton is reset with the use of any
+'clear action, so the user will be required to click cmdShowEmptyVariables again to re-mark empty variables.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oPage As MSForms.Page
+  
+  If Me.optClearPage = True Then
+    
+    ''''''''''''''''
+    'Clear the page.
+    ''''''''''''''''
+    With Me.MultiPage1
+      Set oPage = .Pages(.Value)
+    End With
+    
+    Call ClearPage(oPage)
+    
+  Else
+  
+    ''''''''''''''''
+    'Clear the form.
+    ''''''''''''''''
+    For Each oPage In Me.MultiPage1.Pages
+    
+      ''''''''''''''''''''''
+      'Skip the Library page.
+      ''''''''''''''''''''''
+      If oPage.Name = "EDUserLibrary" Then GoTo NextPage
+      
+      '''''''''''''''''
+      'Clear the page.
+      '''''''''''''''''
+      Call ClearPage(oPage)
+  
+NextPage:
+    Next oPage
+    
+  End If
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Unmark all empty variables/pages in the form if required.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Call HideEmptyVariables
+  
+  Me.txtInfo.Value = ""
+  
+  Call HideClearOptions
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub BBTree_Click(cNode As clsNode)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to display the content of the selected node (Building Block).
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Category nodes don't hold content.
+  If cNode.Tag = "Category" Then
+    Me.cmdLibrarySelect.Enabled = False
+    'Ensure Category exists and isn't empty.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'NOTE: This shouldn't be required. Only categories which exist are loaded.
+    'The user can't make any manual BB modifications while this form is active.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If CategoryEmpty(p_clngGalleryTypeL, cNode.Caption) Then BB_Or_BBCategory_NotFound: Exit Sub
+    ClearPreview
+  Else
+    Me.cmdLibrarySelect.Enabled = True
+    'Ensure Building Block exists.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'NOTE: This shouldn't be required. Only existing Building Blocks are loaded.
+    'The user can't make any manual BB modifications while this form is active.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If Not BuildingBlockExists(p_clngGalleryTypeL, cNode.ParentNode.Caption, cNode.Caption) Then BB_Or_BBCategory_NotFound: Exit Sub
+    'Show a preview of Building Block content.
+    Application.ScreenUpdating = False
+    Preview cNode.ParentNode.Caption, cNode.Caption
+    Application.ScreenUpdating = True
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub lblCollapseAll_Click()
+  BuildBBTree
+End Sub
+
+Private Sub cmdLibraryCancel_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to cancel a selection in the Library and return to
+'the corresponding Library user variable on the form. The final page
+'of the multipage containing the Library will currently be shown.
+'Clicking this button will re-hide the Library.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCtrl As MSForms.Control
+Dim oPage As MSForms.Page
+
+  '''''''''''''''''''''''''''''''''''
+  'Re-enable all controls and pages.
+  '''''''''''''''''''''''''''''''''''
+  'Call modSupport.EnableControls(Me, True)
+  
+  Call modSupport.EnableControls(Me, True, Array("cmdLibrarySelect"))
+  
+  For Each oPage In Me.MultiPage1.Pages
+    oPage.Enabled = True
+  Next oPage
+
+  With Me.MultiPage1
+  
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Clear the user message and restore the variable description. If a variable description exists
+    'for the current variable then it was stored in the .Tag property of the MultiPage control after
+    'the commandbutton click event (carried out in clsRuntimeControlEvents).
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    p_ufGather.txtInfo.Value = .Tag
+    
+    ''''''''''''''''''''''''''
+    'Re-hide the Library page.
+    ''''''''''''''''''''''''''
+    .Pages("EDUserLibrary").Visible = False
+    .Pages("EDUserLibrary").Enabled = False
+    
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Re-select the page where the command button was clicked.
+    'So, extract the page index from the ControlID
+    'e.g. ControlID = 2_7 which gives 2 (page 3).
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    .Value = .Pages("EDUserLibrary").Tag
+    
+  End With
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Re-select the textbox control associated with the originating commandbutton.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oCtrl = Me.Controls("txtLE_" & Me.ControlID)
+  oCtrl.SetFocus
+    
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdLibrarySelect_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure to write the node key of the selected Library item, back into the originating textbox.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim cNode As clsNode
+Dim oCtrl As MSForms.Control
+Dim oTxt As MSForms.TextBox
+Dim oPage As MSForms.Page
+  ''''''''''''''''''''''
+  'Get the selected node.
+  ''''''''''''''''''''''
+  Set cNode = BBTree.ActiveNode
+  If cNode.Tag = "Category" Then Exit Sub
+  '''''''''''''''''''''''''''''
+  'Get the originating textbox.
+  '''''''''''''''''''''''''''''
+  Set oCtrl = Me.Controls("txtLE_" & Me.ControlID)
+  Set oTxt = oCtrl
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Write the selected node key into the originating textbox.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With oTxt
+    .Locked = False
+    .Value = cNode.Key
+    .Locked = True
+  End With
+  '''''''''''''''''''''''''''''''''''
+  'Re-enable all controls and pages.
+  '''''''''''''''''''''''''''''''''''
+  Call modSupport.EnableControls(Me, True)
+  For Each oPage In Me.MultiPage1.Pages
+    oPage.Enabled = True
+  Next oPage
+  ''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Hide the Library and select the originating page.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me.MultiPage1
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Clear the current user message and restore the variable description. If a variable description
+    'exists for the current variable then it was stored in the .Tag property of the Library page
+    'control after the commandbutton click event (carried out in clsRuntimeControlEvents).
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    p_ufGather.txtInfo.Value = .Tag
+    .Pages("EDUserLibrary").Visible = False
+    .Pages("EDUserLibrary").Enabled = False
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Re-select the page where the command button was clicked.
+    'The originating page number has been stored in the Library
+    'page's .Tag property by the commandbutton click event.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    .Value = .Pages("EDUserLibrary").Tag
+  End With
+  oCtrl.SetFocus
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdNextPage_Click()
+  On Error Resume Next
+  With Me.MultiPage1
+    .Value = .Value + 1
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdPreviousPage_Click()
+  On Error Resume Next
+  With Me.MultiPage1
+    If .Value = 0 Then GoTo lbl_Exit
+    .Value = .Value - 1
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Cancel / Close
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Private Sub cmdCancel_Click()
+  With Me
+    .CancelClose = True
+    .Hide
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Returns execution to modGather.ShowGatheredVariables
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''
+  End With
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+  If CloseMode = 0 Then
+    Cancel = True
+    With Me
+      .CancelClose = True
+      .Hide
+    End With
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub cmdPopulate_Click()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to populate document(s) with the user's chosen variable values.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If user has chosen to enforce 'No empty variables', then
+  'check & highlight empty variables prior to allowing insert.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me
+    If .chkNoEmptyVariables.Value = False Then
+      If fcnEmptyVariables = True Then
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'Function is dual purpose is dual purpose - it will return True or False
+        'depending on wether it finds empty variables, but it will also mark the
+        'empty variables/pages or unmark them if they are now found to be complete.
+        'This allows the user to use a single button which will continually update
+        'the form depending on wether the variables are complete or not.
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        .txtInfo.Value = .lblIncompleteFormMsgHidden.Caption
+        GoTo lbl_Exit
+      End If
+    End If
+  End With
+  
+  Me.Hide
+  '''''''''''''''''''''''
+  'Populate the document.
+  '''''''''''''''''''''''
+  Call FillDocument
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Force a screen refresh in case the final CC to be processed
+  'is a ComboBox CC - its DD selector may still be visible.
+  'See ufDropDown.cmdOK_Click procedure for more details.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Application.ScreenRefresh
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub FillDocument()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to populate all user variables in the document by looping through relevant
+'controls in the userform. User variables (appCCs) are targeted using the relevant UF
+'control's .Tag property, which holds the .Title property of the CC. The CC is then
+'populated with the .Value property of the UF control.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oDoc As Document
+Dim oPage As MSForms.Page
+Dim oCtrl As MSForms.Control
+Dim oTxt As MSForms.TextBox
+Dim oCombo As MSForms.ComboBox
+Dim oCCs As ContentControls
+Dim oCC As ContentControl
+Dim strVariableValue As String 'Holds the .Value of a relevant control (this becomes the value of the user variable in the document).
+Dim strCategory As String
+Dim strBBName As String
+Dim bLibEntry As Boolean
+Dim bEmptyLibEntry As Boolean
+Dim oUndoRecord As Word.UndoRecord
+  
+  For Each oPage In Me.MultiPage1.Pages
+  
+    '''''''''''''''''''''''
+    'Skip the Library page.
+    '''''''''''''''''''''''
+    If oPage.Name = "EDUserLibrary" Then GoTo NextPage
+  
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'The .Tag property of each page holds the full name of the
+    'document that contains the variables displayed on the page.
+    'Set the target document:
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Set oDoc = Documents(oPage.Tag)
+    
+    ''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Get the variable value from each relevant control.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''
+    For Each oCtrl In oPage.Controls
+    
+      bLibEntry = False
+    
+      Select Case TypeName(oCtrl)
+      
+        Case "TextBox"
+        
+          Set oTxt = oCtrl
+          
+          ''''''''''''''''''''''''''''''''''''''''''''''''''
+          'Determine if we are dealing with a Library Entry.
+          ''''''''''''''''''''''''''''''''''''''''''''''''''
+          If Left(oCtrl.Name, 5) = "txtLE" Then
+          
+            bLibEntry = True
+          
+            If Len(Trim(oTxt.Value)) < 1 Then
+            
+              'Deal with empty string.
+              bEmptyLibEntry = True
+              
+            Else
+              
+              ''''''''''''''''''''''''''''''''''''''''''''''''
+              'Get Building Block category & name from textbox.
+              ''''''''''''''''''''''''''''''''''''''''''''''''
+              strCategory = Trim(Split(oTxt.Value, "||")(0))
+              strBBName = Trim(Split(oTxt.Value, "||")(1))
+
+            End If
+            
+          Else
+
+            strVariableValue = Trim(oTxt.Value)
+          
+          End If
+          
+        Case "ComboBox"
+        
+          Set oCombo = oCtrl
+          strVariableValue = oCombo.Value
+          
+        Case Else
+
+          GoTo NextControl
+          
+      End Select
+      
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'Populate CC.
+      'The .Tag property of each TextBox/ComboBox control
+      'holds the .Title property of a CC in the document.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      Set oCCs = oDoc.SelectContentControlsByTitle(oCtrl.Tag)
+      
+      For Each oCC In oCCs
+      
+        Set oUndoRecord = Application.UndoRecord
+        oUndoRecord.StartCustomRecord "Populate variable"
+        
+        With oCC
+        
+          .LockContentControl = False
+          .LockContents = False
+          
+          If bLibEntry Then
+          
+            If Not bEmptyLibEntry Then
+              .Range.Font.Reset
+              On Error Resume Next
+              p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL).Categories(strCategory).BuildingBlocks(strBBName).Insert .Range, True
+              On Error GoTo 0
+            End If
+            
+            If p_bHighlight Then .Range.Font.Shading.BackgroundPatternColor = p_clngLEColor
+            
+          Else
+          
+            '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            'Allow blank entries in userform; this can be used to 'reset' populated variables.
+            'If entry is blank (i.e. no entry in the chosen userform control) then the variable
+            'value in the document (CC.Range.Text) will revert to variable name (CC.PHT).
+            '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+            If Len(strVariableValue) < 1 Then
+              .Range.Text = .PlaceholderText
+            Else
+              .Range.Text = strVariableValue
+            End If
+
+          End If
+              
+NextCC:
+          .LockContentControl = True
+          .LockContents = True
+          
+          oUndoRecord.EndCustomRecord
+          
+        End With
+
+      Next oCC
+      
+NextControl:
+    Next oCtrl
+  
+NextPage:
+  Next oPage
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If before the document was filled, the selection range was an insertion point which lay
+  'directly to the right or left of a user variable, then continuing to type after populating
+  'the document(s) will continue the variable shading. This is because the WindowSelectionChange
+  'event isn't triggered during document population. Ensure variable shading isn't continued:
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Selection.Font.Shading.BackgroundPatternColor = -16777216
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Function fcnEmptyVariables() As Boolean
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'This function serves two purposes:
+'
+'1. Function returns True if empty variables exist in the form (i.e. the textbox/combobox related to a
+'   given variable is empty). False if not.
+'
+'2. The function also highlights all empty variables in the form by setting the corresponding label control
+'   to the colour red, and marking the page as incomplete (i.e., "[ _ ]" is added to the page tab). Previously
+'   incomplete variables which are now complete are returned to their original state each time this function
+'   is called.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCtrl As MSForms.Control      'General control.
+Dim oPage As MSForms.Page         'General control.
+Dim oTxt As MSForms.TextBox       'General control.
+Dim oCombo As MSForms.ComboBox    'General control.
+Dim oLbl As MSForms.Label         'General control.
+Dim strID As String               'Used to extract the control ID i.e. txtST_14 (strID = "14").
+Dim lngColour As Long             'Used to sets the Label ForeColor (vbRed if incomplete).
+Dim bPageIncomplete As Boolean    'Used to mark a page which contains incomplete variables.
+  
+  ''''''''''''''''''''''''''
+  'Set default return value.
+  ''''''''''''''''''''''''''
+  fcnEmptyVariables = False
+  
+  For Each oPage In Me.MultiPage1.Pages
+  
+    If oPage.Name = "EDUserLibrary" Then GoTo NextPage
+  
+    For Each oCtrl In oPage.Controls
+    
+      ''''''''''''''''''''''''''''''''''''
+      'Set default colour for each button.
+      'Assume each variable is complete.
+      ''''''''''''''''''''''''''''''''''''
+      lngColour = vbButtonText
+    
+      Select Case TypeName(oCtrl)
+      
+        Case "TextBox"
+          
+          Set oTxt = oCtrl
+          ''''''''''''''''''''''''''''''''''''
+          'Check that a value has been entered.
+          ''''''''''''''''''''''''''''''''''''
+          If Len(Trim(oTxt.Value)) < 1 Then
+            bPageIncomplete = True
+            lngColour = vbRed
+          End If
+            
+        Case "ComboBox"
+        
+          Set oCombo = oCtrl
+          ''''''''''''''''''''''''''''''''''''
+          'Check that a value has been entered.
+          ''''''''''''''''''''''''''''''''''''
+          If Len(Trim(oCombo.Value)) < 1 Then
+            bPageIncomplete = True
+            lngColour = vbRed
+          End If
+          
+        Case Else
+        
+          GoTo NextControl
+          
+      End Select
+      
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'When a variable has a missing value, the correponding
+      'label is marked in red. This function also reverses
+      'this process by changing the label forecolor back to
+      'vbButtonText if the variable has a value.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''''
+      
+      '''''''''''''''''''''''''''''''''''''''''
+      'Extract the ID from the control name.
+      'I.e. txtST_27 gives "27" etc.
+      '''''''''''''''''''''''''''''''''''''''''
+      strID = Split(oCtrl.Name, "_")(1)
+      
+      ''''''''''''''''''''''''''''''''''''''''''
+      'Highlight the corresponding label with
+      'appropriate color.
+      ''''''''''''''''''''''''''''''''''''''''''
+      Set oLbl = oPage.Controls("lbl_" & strID)
+      oLbl.ForeColor = lngColour
+    
+NextControl:
+    Next oCtrl
+  
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'If required, mark page as incomplete using "[ _ ]".
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''
+    With oPage
+    
+      If bPageIncomplete Then
+      
+        ''''''''''''''''''''''''''''''''''''
+        'Mark the page if not already marked.
+        ''''''''''''''''''''''''''''''''''''
+        If Left(.Caption, 5) <> "[ _ ]" Then .Caption = "[ _ ]" & .Caption
+        
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'Set the return value of the function to True indicating
+        'incomplete variables in the form.
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        fcnEmptyVariables = True
+        
+      Else
+      
+        ''''''''''''''''''''''''''''''''''''
+        'Remove the marker if already marked.
+        ''''''''''''''''''''''''''''''''''''
+        If Left(.Caption, 5) = "[ _ ]" Then .Caption = Right(.Caption, (Len(.Caption) - 5))
+        
+      End If
+      
+    End With
+    
+    '''''''''''''''''''''''''''''''''
+    'Reset page marker for next page.
+    '''''''''''''''''''''''''''''''''
+    bPageIncomplete = False
+  
+NextPage:
+  Next oPage
+  
+lbl_Exit:
+  Exit Function
+End Function
+
+Private Sub HideEmptyVariables()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to hide all empty variables in the form. Empty variables have their
+'related label marked red and their related page tab is marked as incomplete
+'by prefixing the name with the symbol "[ _ ]". This procedure loops through all
+'form controls resetting red labels to the fefault colour vbButtonText and removing
+'the incomplete page symbol.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCtrl As MSForms.Control
+Dim oPage As MSForms.Page
+Dim oLbl As MSForms.Label
+Dim bValid As Boolean
+
+  For Each oPage In Me.MultiPage1.Pages
+
+    If oPage.Name = "EDUserLibrary" Then GoTo NextPage
+
+    For Each oCtrl In oPage.Controls
+
+      Select Case TypeName(oCtrl)
+      
+        Case "Label"
+
+          Set oLbl = oCtrl
+          If oLbl.ForeColor = vbRed Then oLbl.ForeColor = vbButtonText
+
+        Case Else
+
+          GoTo NextControl
+          
+      End Select
+
+NextControl:
+    Next oCtrl
+
+    With oPage
+        If Left(.Caption, 5) = "[ _ ]" Then .Caption = Right(.Caption, (Len(.Caption) - 5))
+    End With
+
+NextPage:
+  Next oPage
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub ClearPage(oPage As MSForms.Page)
+'''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to clear all relevant controls in oPage.
+'''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCtrl As MSForms.Control
+Dim oTxt As MSForms.TextBox
+Dim oCombo As MSForms.ComboBox
+  
+  For Each oCtrl In oPage.Controls
+    
+    Select Case TypeName(oCtrl)
+    
+      Case "TextBox"
+        Set oTxt = oCtrl
+        oTxt.Value = ""
+          
+      Case "ComboBox"
+        Set oCombo = oCtrl
+        oCombo.Value = ""
+        
+    End Select
+    
+  Next oCtrl
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub BuildBBTree()
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to build the treeview from all stored Building Blocks within
+'the chosen Building Block gallery of this global template.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oNode As clsNode
+Dim oCategory As Word.Category
+Dim oBB As Word.BuildingBlock
+Dim lngCategory As Long
+Dim lngBB As Long
+  'Clear the existing entries in the TreeView
+  If Not BBTree Is Nothing Then BBTree.NodesClear: BBTree.TerminateTree: Set BBTree = Nothing
+  Set BBTree = New clsTreeView
+  With BBTree
+    Set .TreeControl = Me.fraTreeControl
+    Set .Images = Me.fraImageBox
+    .RootButton = False
+    .ShowLines = False
+    .ShowExpanders = False
+    .NodeHeight = 18
+    .Indentation = 15
+  End With
+  'Ensure Library content is available.
+  If LibraryIsEmpty Then Exit Sub
+  If p_oTemplate Is Nothing Then GrabTemplate
+  With p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL)
+    'Add all Category root nodes to tree.
+    For lngCategory = 1 To .Categories.Count
+      Set oCategory = .Categories(lngCategory)
+      If Not CategoryEmpty(p_clngGalleryTypeL, oCategory.Name) Then
+        'Add category root node.
+        Set oNode = BBTree.AddRoot(sKey:=oCategory.Name, vCaption:=oCategory.Name, vImageMain:="FolderClosed", vImageExpanded:="FolderOpen")
+        'Set root properties.
+        With oNode
+          .Expanded = False
+          .Tag = "Category"
+        End With
+        'Add all BB nodes to tree.
+        For lngBB = 1 To oCategory.BuildingBlocks.Count
+          Set oBB = oCategory.BuildingBlocks.Item(lngBB)
+          oNode.AddChild sKey:=oNode.Key & " " & p_cstrDelimiter & " " & oBB.Name, vCaption:=oBB.Name, vImageMain:="NOTE04"
+        Next lngBB
+      End If
+    Next lngCategory
+  End With
+  'Build the tree.
+  BBTree.Refresh
+  With Me.fraImageBox
+    .Enabled = False
+    .Visible = False
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub HideClearOptions()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Housekeeping procedure used by cmdCancelClear & cmdOkClear click events to enable
+'all controls, and re-hide the clear option controls after an Ok or Cancel action.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+  '''''''''''''''''''''''''''
+  'Enable all controls.
+  '''''''''''''''''''''''''''
+  Call modSupport.EnableControls(Me, True)
+  
+  ''''''''''''''''''''''''''
+  'Re-hide required controls.
+  ''''''''''''''''''''''''''
+  With Me
+    .lblClearVariablesFrom.Visible = False
+    .optClearPage.Visible = False
+    .optClearForm.Visible = False
+    .cmdOkClear.Visible = False
+    .cmdCancelClear.Visible = False
+  End With
+  
+  ''''''''''''''''''''''''''''''''''''''''''
+  'Reset .Tag property of cmdClearVariables
+  ''''''''''''''''''''''''''''''''''''''''''
+  Me.cmdClearVariables.Tag = ""
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub PrepareUserform()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to set default control states and size & position all of the existing userform
+'controls prior to the dynamic controls being added. The userform and multipage dimensions
+'are a product of the module level constants for lbl width, column spacing, border spacing,
+'number of paired controls per column etc.
+'
+'Notes:
+'------
+'The space between horizontally aligned command buttons is 7.5
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Disable & hide all controls associated with the 'Clear' CommandButton.
+  '
+  'NOTE: At present, a Frame control labelled 'Options' could not be placed around
+  'the 'Clear' options as it kept causing Word to crash.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With Me
+    .lblClearVariablesFrom.Visible = False
+    .optClearPage.Visible = False
+    .optClearForm.Visible = False
+    .cmdCancelClear.Visible = False
+    .cmdOkClear.Visible = False
+  End With
+  
+  With Me
+    '''''''''''''''''''''''''''''''''''''''''''''''
+    'CheckBox default - no empty variables allowed.
+    '''''''''''''''''''''''''''''''''''''''''''''''
+    .chkNoEmptyVariables.Value = False
+    
+    '.Caption = "***TEST VERSION*** EasyDoc V1.0" & " " & Chr(169) & " " & "------- Gathered variables"
+    .Caption = "***TEST VERSION*** " & Chr(169) & " " & "------- Gathered variables"
+    
+    '''''''''''''''''''''''''''''''''''''''''
+    'Display initial info message in info box.
+    '''''''''''''''''''''''''''''''''''''''''
+    .txtInfo.Value = lblInfoHidden.Caption
+  End With
+  
+  With Me
+    '''''''''''''''''''''
+    'Size multipage & UF.
+    '''''''''''''''''''''
+    With .MultiPage1
+      .Width = (m_lngLeftBorder + m_lngLblWidth + (m_lngCtrlSpaceH * 2) + m_lngCtrlWidth + 20) * 2 + m_lngColumnSpacing
+      .Height = (m_lngMaxColCtrls * m_lngCtrlHeight) + (m_lngTopBorder * 2) + ((m_lngMaxColCtrls - 1) * m_lngCtrlSpaceV) + 30 '+15
+    End With
+    
+    .Width = .MultiPage1.Width + 30
+    .Height = .MultiPage1.Height + 135
+    
+    ''''''''''''''''''''''
+    'Position all controls.
+    ''''''''''''''''''''''
+    With .fraInfo
+      .Top = 7.5
+      .Left = 11.25
+    End With
+    
+    With .chkNoEmptyVariables
+      .Top = 11.25
+      .Left = Me.fraInfo.Left + Me.fraInfo.Width + 10
+    End With
+    
+    With .cmdClearVariables
+      .Top = Me.fraInfo.Top + Me.fraInfo.Height - .Height
+      .Left = Me.chkNoEmptyVariables.Left
+    End With
+    
+    With .MultiPage1
+      .Left = Me.fraInfo.Left
+      .Top = Me.fraInfo.Top + Me.fraInfo.Height + 11.25
+    End With
+    
+    With .lblLogoImage
+      .Top = Me.MultiPage1.Top + Me.MultiPage1.Height + 5
+      .Left = Me.MultiPage1.Left
+    End With
+
+    With .cmdPreviousPage
+      .Top = Me.lblLogoImage.Top
+      .Left = Me.MultiPage1.Left + (Me.MultiPage1.Width / 2) - .Width
+    End With
+    
+    With .cmdNextPage
+      .Top = Me.lblLogoImage.Top
+      .Left = Me.cmdPreviousPage.Left + Me.cmdPreviousPage.Width + 7.5
+    End With
+  
+    With .cmdPopulate
+      .Top = Me.lblLogoImage.Top
+      .Left = Me.MultiPage1.Left + Me.MultiPage1.Width - .Width
+    End With
+    
+    With .cmdCancel
+      .Top = Me.cmdPopulate.Top
+      .Left = Me.cmdPopulate.Left - 7.5 - .Width
+    End With
+    
+  End With
+End Sub
+
+Sub Preview(CategoryName As String, BuildingBlockName As String)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to preview Building Block content in the inkPreview control.
+'This procedure has had input from both Greg Maxey and myself.
+'
+' Parameters:
+' -----------
+' CategoryName        The category name of the Building Block we want to preview.
+' BuildingBlockName   The name of the Building Block we want to preview.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oBB As Word.BuildingBlock
+Dim oRng As Range
+Dim strAlert As String
+Dim i As Long
+Dim bPasteAgain As Boolean
+Dim bContainsSpecFields As Boolean 'MacroButton, Barcode, Goto Button, Private, RD, TA, TC, XE.
+Dim bContainsShapes As Boolean
+Dim bSuppressPreview As Boolean
+Dim bClipboardWasEmpty As Boolean
+
+  bSuppressPreview = False
+  bContainsSpecFields = False
+  
+  strAlert = vbCr & vbCr & vbCr & vbCr & vbCr & _
+         vbTab & vbTab & "The selected Library item cannot be previewed. " & vbCr & vbCr & _
+         vbTab & vbTab & "A preview of certain items containing one or more high resolution " & vbCr & _
+         vbTab & vbTab & "photographs, certain full-page (cover page) building blocks with " & vbCr & _
+         vbTab & vbTab & "complex graphics, content containing certain underlying field codes, " & vbCr & _
+         vbTab & vbTab & "and items where the content size exceeds a set limit cannot be previewed." & vbCr & vbCr & _
+         vbTab & vbTab & "The Description property can be used to create a detailed " & vbCr & _
+         vbTab & vbTab & "description of any Library items that cannot be previewed."
+
+  If p_oTemplate Is Nothing Then GrabTemplate
+  
+  'Get the Building Block. Assume Building Block exists as per lstLibraryItems_Click.
+  Set oBB = p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL).Categories(CategoryName).BuildingBlocks(BuildingBlockName)
+  
+  #If DEBUGMODE = 1 Then
+    If Len(oBB.Value) = 0 Then
+      MsgBox "Preview procedure:" & vbCr & vbCr & _
+             oBB.Name & ": " & "Len(oBB.Value) is 0. This will now cause an error when trying to cut."
+      Stop
+      'BB_Or_BBCategory_NotFound
+      Exit Sub
+    End If
+  #End If
+  
+  'Application.ScreenUpdating = False
+  
+  'Use the template as a scratch range.
+  Set oRng = ThisDocument.Range
+  oRng.Delete                                         '##### Undo 1 #####
+  'Add an insert range to store users last cut item.
+  ThisDocument.Paragraphs.Add                         '##### Undo 2 #####
+  'Add a BB insert range.
+  ThisDocument.Paragraphs.Add                         '##### Undo 3 #####
+  'The Preview feature uses the clipboard so the user's last cut or copied content can be lost.
+  'Paste the user's current clipboard content.
+  Set oRng = ThisDocument.Paragraphs(1).Range
+  On Error Resume Next
+  oRng.Paste                                          'Will fail in clipboard is empty.
+  'Error 4605 for empty clipboard. We can handle unexpected errors in the same way.
+  If Err.Number <> 0 Then bClipboardWasEmpty = True
+  On Error GoTo 0
+  'Insert BB content into template range.
+  Set oRng = ThisDocument.Paragraphs.Last.Range
+  oBB.Insert oRng                                     '##### Undo 4 #####
+  
+  'Test for shapes
+  If oRng.ShapeRange.Count > 0 Then bContainsShapes = True
+  
+  'Test for special fields.
+  If oRng.Fields.Count > 0 Then
+    For i = 1 To oRng.Fields.Count
+      With oRng.Fields(i)
+        If .Type = wdFieldMacroButton Or .Type = wdFieldBarCode Or .Type = wdFieldGoToButton _
+        Or .Type = wdFieldPrivate Or .Type = wdFieldRefDoc Or .Type = wdFieldCitation Then
+        bContainsSpecFields = True
+        Exit For
+        End If
+      End With
+    Next
+  End If
+  
+  'Test for large/complex content:
+  'Very large content e.g., pictures simply can't be previewed. It locks up Word.
+  If Len(oRng.XML) > 500000 Then bSuppressPreview = True
+  'Cut the user's BB content from template.
+  oRng.Cut                                            '##### Undo 5 #####
+  With inkPreview
+    
+    .Locked = False
+    .Text = vbNullString
+    
+    If Not bSuppressPreview Then
+PasteAgain:
+
+      .Text = vbNullString
+      SendMessage .hWnd, WM_PASTE, 0&, 0&
+      
+      If Len(.Text) < 3 Then
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'It is possible that the paste command failed. If this occurs then the content may still be previewed
+        'if we try again. When paste fails, there seems to be blank content placed in the inkEdit control which takes
+        'up the same amount of physical space as the pasted content would have (even although Len(.Text) < 3). This
+        'means that if the actual content is eventually pasted, it will be placed part way down the inkEdit control
+        '(after the invisible content); this is the reason for the additional .Text = vbNullString (above).
+        '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        #If DEBUGMODE = 1 Then
+          Stop
+        #End If
+        'Try to paste content again.
+        If bPasteAgain = False Then bPasteAgain = True: GoTo PasteAgain
+        'Paste has failed twice.
+        .Text = strAlert
+        GoTo PasteFail
+      End If
+      
+      If bContainsShapes And Not bContainsSpecFields Then
+        
+        .Text = .Text & vbCr + vbCr & _
+         "    _______________________________________________________________________________" & vbCr & _
+         vbTab & vbTab & "Note: The selected Library item contains one or more shapes." & vbCr & _
+         vbTab & vbTab & "Shapes are not displayed in the preview but will be inserted correctly." & vbCr & _
+         vbTab & vbTab & "A description can be used for items which don't preview correctly."
+         
+      ElseIf bContainsSpecFields And Not bContainsShapes Then
+      
+        .Text = .Text & vbCr + vbCr & _
+         "    _______________________________________________________________________________" & vbCr & _
+         vbTab & vbTab & "Note: The selected Library item contains one or more special fields. Certain " & vbCr & _
+         vbTab & vbTab & "special fields are not displayed in the preview but will be inserted correctly." & vbCr & _
+         vbTab & vbTab & "A description can be used for items which don't preview correctly."
+
+      ElseIf bContainsShapes And bContainsSpecFields Then
+      
+        .Text = .Text & vbCr + vbCr & _
+         "    _______________________________________________________________________________" & vbCr & _
+         vbTab & vbTab & "Note: The selected Library item contains one or more shapes and one or more " & vbCr & _
+         vbTab & vbTab & "special fields. Shapes and certain special fields are not displayed in the preview " & vbCr & _
+         vbTab & vbTab & "but will be inserted correctly. A description can be used for items which don't" & vbCr & _
+         vbTab & vbTab & "preview correctly."
+      
+      End If
+      
+    Else
+    
+      .Text = strAlert
+      
+    End If
+    
+PasteFail:
+
+    .Refresh
+    .Locked = True
+    
+  End With
+  'Get back the original clipboard content if available.
+  If bClipboardWasEmpty Then
+    'Undo everything by this procedure.
+    ThisDocument.undo 5
+  Else
+    'Cut the original content back to the clipboard.
+    ThisDocument.undo 2
+    Set oRng = ThisDocument.Paragraphs(1).Range
+    oRng.End = oRng.End - 1
+    'Error handling here is probably overkill.
+    On Error Resume Next
+    oRng.Cut
+    On Error GoTo 0
+  End If
+  'Show BB description.
+  Me.lblBBDescription.Caption = oBB.Description
+  'Application.ScreenUpdating = True
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub ClearPreview()
+  With Me.inkPreview
+    .Locked = False
+    .Text = ""
+    .Locked = True
+  End With
+  Me.lblBBDescription.Caption = ""
+End Sub
+
+Function LibraryIsEmpty() As Boolean
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to determine if the user library is empty, i.e. no Building Blocks exist in the chosen Building Block Gallery.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCategory As Word.Category
+Dim i As Long
+  If p_oTemplate Is Nothing Then GrabTemplate
+  With p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeL)
+    For i = 1 To .Categories.Count
+      Set oCategory = .Categories(i)
+      If CategoryEmpty(p_clngGalleryTypeL, oCategory.Name) Then
+        GoTo NextCategory
+      Else
+        Exit Function
+      End If
+NextCategory:
+    Next i
+  End With
+  With Me.inkPreview
+    .Locked = False
+    .Text = ""
+    .Text = vbCr & vbCr & vbCr & vbCr & vbCr & _
+            vbTab & "The Library is empty. " & vbCr & vbCr & _
+            vbTab & "Create some content to use with Library variables. Click Cancel to go back."
+                                  
+    .Locked = True
+  End With
+  LibraryIsEmpty = True
+lbl_Exit:
+  Exit Function
+End Function
+
+'Sub BB_Or_BBCategory_NotFound()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+''Procedure to display help text in the inkEdit control which alerts the user
+''that the selected building block or category doesn't exist. Categories or
+''Building Blocks which don't exist (or are empty) shouldn't be displayed in
+''the Library listbox. Assuming no errors, this procedure shouldn't be needed.
+''It may be needed if the user deletes Building Blocks while the UF is displayed.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Dim cRoot As clsNode
+'Dim sMsg As String
+'  sMsg = "Error: Category or Building Block not found." & vbCr & vbCr & _
+'         "This error can result from manual modification of document Building Blocks while the Library is active. " & _
+'         "If this problem persists, please close then re-open Microsoft Word." & vbCr & vbCr & _
+'         "The selected item or Category will now be removed from the Library item list."
+'  MsgBox sMsg, vbOKOnly + vbCritical, "Library Error - BB or Category not found"
+'  With BBTree
+'    'Get the category root node.
+'    Set cRoot = .ActiveNode.ParentNode
+'    'Delete selected BB node.
+'    BBTree.NodeRemove .ActiveNode
+'    'If the category root node is now empty, remove it.
+'    If cRoot.GetChild(-1) Is Nothing Then .NodeRemove cRoot
+'    .Refresh
+'    .EnterExit True
+'  End With
+'  ClearPreview
+'lbl_Exit:
+'  Exit Sub
+'End Sub
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Public properties
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Public Property Get ControlID() As String
+  ControlID = m_strControlID
+End Property
+
+Public Property Let ControlID(ByVal strCtrlID As String)
+  m_strControlID = strCtrlID
+End Property
+
+Public Property Get CancelClose() As Boolean
+  CancelClose = m_bCancelClose
+End Property
+
+Public Property Let CancelClose(bCancelClose As Boolean)
+  m_bCancelClose = bCancelClose
+End Property
+
+

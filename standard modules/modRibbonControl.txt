@@ -1,0 +1,573 @@
+Attribute VB_Name = "modRibbonControl"
+Option Explicit
+
+'Sub AutoExec()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+''AutoExec is fired when loading the Template as an Add-in.
+''Fires before Ribbon OnLoad.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'  AddReference
+'  Set oAppClass.oApp = Word.Application
+'  Call modMarkup.HighlightVariables
+'  Debug.Print "AutoExec"
+'lbl_Exit:
+'  Exit Sub
+'End Sub
+
+Sub AutoOpen()
+''''''''''''''''''''''''''''''''''''''''''''''''''''
+'AutoOpen is fired when opening the Template itself.
+'Fires before Ribbon OnLoad.
+''''''''''''''''''''''''''''''''''''''''''''''''''''
+  AddReference
+  Set p_oAppEvents.oApp = Word.Application
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub OnLoad(ribbon As IRibbonUI)
+'Create a ribbon instance.
+  'Set public variable.
+  Set myRibbon = ribbon
+  
+  myTag = "*"
+  
+  'Store memory reference to ribbon object, in case of unhandled error.
+  ThisDocument.Variables("RibbonPointer").Value = ObjPtr(ribbon)
+  ThisDocument.Saved = True
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub GetDescription(Control As IRibbonControl, ByRef Description)
+
+  Select Case Control.ID
+    '------------------------------------------------
+    'GROUP 1
+    '------------------------------------------------
+
+    'Insert buttons (Menu 1):
+    '''''''''''''''''''''''''
+    Case "Grp1Menu1Btn1"
+      Description = "Inserts a Short Text variable. " & _
+                    "Used to mark individual words or short sentences."
+                    
+    Case "Grp1Menu1Btn2"
+      Description = "Inserts a Drop-Down variable. " & _
+                   "Used to mark words or short sentences " & _
+                   "with multiple possible values to choose from."
+                   
+    Case "Grp1Menu1Btn3"
+      Description = "Inserts a Library Entry variable. " & _
+                   "Used to insert content from the Library " & _
+                   "which can contain multiple paragraphs of formatted text, images etc."
+                   
+
+    'Remove buttons (Split button 1):
+    '''''''''''''''''''''''''''''''''
+    Case "Grp1SB1Menu1Btn1"
+      Description = "Removes the selected variable or removes all variables in the selected range."
+      
+    Case "Grp1SB1Menu1Btn2"
+      Description = "Removes all variables with the same name as the selected variable. " & _
+                    "Select a single variable only when using this option."
+      
+    Case "Grp1SB1Menu1Btn3"
+      Description = "Removes all variables from the document."
+      
+    '------------------------------------------------
+    'GROUP 2
+    '------------------------------------------------
+
+    'Gather buttons (Menu 1):
+    '''''''''''''''''''''''''
+    Case "Grp2Menu1Btn1"
+      Description = "Gathers variables from all currently open documents."
+                    
+    Case "Grp2Menu1Btn2"
+      Description = "Gathers variables from all documents in a selected folder."
+
+    Case "Grp2Menu1Btn3"
+      Description = "Gathers variables from a selected document."
+    '------------------------------------------------
+    
+    Case Else
+      'Do nothing
+  End Select
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub GetSuperTip(Control As IRibbonControl, ByRef supertip)
+  
+  Select Case Control.ID
+    Case "Grp1Btn1"
+      supertip = "Allows editing of the selected variable's name, description etc."
+    Case "Grp1Btn2"
+      supertip = "Resets all variables in the current document. The current value of the variable will be replaced by the variable's name."
+    Case "Grp1Btn3"
+      supertip = "Displays a dialog where the currently saved variables can be removed."
+    Case "Grp1Btn4"
+      supertip = "Adds the selected variable to the 'Saved' variables menu for frequent use."
+    Case "Grp3Btn1"
+      supertip = "Shows the Library of saved content."
+    Case Else
+      'Do nothing
+  End Select
+
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'Callback for GetContent to return XML used to create dynamicMenu
+Sub GetContent(Control As IRibbonControl, ByRef content)
+Dim oCategory As Word.Category
+Dim oBB As Word.BuildingBlock
+Dim sXML As String
+Dim sLabel As String
+Dim sImage As String
+Dim lngBB As Long
+Dim i As Long
+
+  'Open the XML string
+  Select Case Control.ID
+  
+    Case "Grp1DMenu1"
+    
+      sXML = "<menu xmlns=""" & _
+           "http://schemas.microsoft.com/office/2009/07/customui""" & " " & "itemSize=""normal"">"
+
+      
+      If CategoryEmpty(p_clngGalleryTypeV, "Saved variables") Then
+        sXML = sXML & _
+             "<button id=""Grp1DMenu1Btn1"" " & _
+             "label=""No entries listed"" " & _
+             "imageMso=""DeclineInvitation""/>"
+        sXML = sXML & "</menu>"
+        content = sXML
+        Exit Sub
+      End If
+
+      i = 1
+      
+      If p_oTemplate Is Nothing Then GrabTemplate
+      Set oCategory = p_oTemplate.BuildingBlockTypes(p_clngGalleryTypeV).Categories(p_cstrBBCategoryV)
+      
+      With oCategory
+      For lngBB = 1 To .BuildingBlocks.Count
+      
+        Set oBB = .BuildingBlocks(lngBB)
+        
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        'pLabel is equal to the Building Block name, which is the title
+        'of the saved CC user variable e.g. ST: ProjectNumber.
+        ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+        sLabel = oBB.Name
+        
+        Select Case Left(sLabel, 2)
+          Case "ST"
+            sImage = "FormControlEditBox"
+          Case "DD"
+            sImage = "ViewsLayoutView"
+          Case "LE"
+            sImage = "Thesaurus"
+        End Select
+        
+        ''''''''''''''''''''''''''''''''''''''
+        'Button .tag property equal to sLabel.
+        'SLabel = oBB.Name = oCC.Title.
+        ''''''''''''''''''''''''''''''''''''''
+        sXML = sXML & _
+             "<button id=""Grp1DMenu1Btn" & i & Chr(34) & " " & _
+             "label=" & Chr(34) + sLabel + Chr(34) & " " & _
+             "imageMso=" & Chr(34) + sImage + Chr(34) & " " & _
+             "tag=" & Chr(34) + sLabel + Chr(34) & " " & _
+             "onAction=""modRibbonControl.ButtonOnAction""/>" & vbCrLf & _
+             "<menuSeparator id=""Grp1MS" & i & Chr(34) & "/>"
+             
+             i = i + 1
+      
+      Next lngBB
+      End With
+
+      sXML = sXML & "</menu>"
+      content = sXML
+      
+    Case Else
+      'Do Nothing
+  End Select
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub GetEnabled(Control As IRibbonControl, ReturnedVal)
+  If Control.ID Like myTag Then
+    ReturnedVal = True
+  Else
+    ReturnedVal = False
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'Callback for Button onAction
+Sub ButtonOnAction(Control As IRibbonControl)
+Dim uf As Object
+
+  If CustomUndo Is Nothing Then
+    Set CustomUndo = Application.UndoRecord
+  Else
+    If CustomUndo.IsRecordingCustomRecord Then CustomUndo.EndCustomRecord
+  End If
+
+  'Any unhandled errors will destroy Application & Document level events.
+  If p_oAppEvents.oApp Is Nothing Then Set p_oAppEvents.oApp = Word.Application
+  If p_oDocEvents Is Nothing Then SetUpDocumentEvents
+  
+  'If ufLibrary is minimized then restore it.
+  If Control.ID = "Grp3Btn1" Then
+    For Each uf In VBA.UserForms
+      If uf.Name = "ufLibrary" Then ShowWindow p_hWnd, SW_RESTORE: Exit Sub
+    Next uf
+  End If
+  
+  'Can't gather when ufLibrary is active - alert user and restore ufLibrary.
+  If Control.ID Like "Grp2*" Then
+    For Each uf In VBA.UserForms
+      If uf.Name = "ufLibrary" Then
+        MsgBox "Can't gather variables while the Library is active. Please close the Library then try again.", vbOKOnly + vbInformation, "Library is active"
+        ShowWindow p_hWnd, SW_RESTORE
+        Exit Sub
+      End If
+    Next uf
+  End If
+  
+  'Dynamic menu buttons:
+  ''''''''''''''''''''''
+  If Left(Control.ID, 13) = "Grp1DMenu1Btn" Then
+    modMarkup.InsertSavedVariable (Control.Tag)
+  End If
+
+  Select Case Control.ID
+    '------------------------------------------------
+    'GROUP 1
+    '------------------------------------------------
+
+    'Insert buttons (Menu 1):
+    '''''''''''''''''''''''''
+    Case "Grp1Menu1Btn1"
+      
+      CustomUndo.StartCustomRecord "InsertShortText"
+      modMarkup.InsertShortText
+      CustomUndo.EndCustomRecord
+
+    Case "Grp1Menu1Btn2"
+    
+      CustomUndo.StartCustomRecord "InsertDropDown"
+      modMarkup.InsertDropDown
+      
+    Case "Grp1Menu1Btn3"
+    
+      CustomUndo.StartCustomRecord "InsertLibraryEntry"
+      modMarkup.InsertLibraryEntry
+      CustomUndo.EndCustomRecord
+      
+    'Edit variable button:
+    ''''''''''''''''''''''
+    Case "Grp1Btn1"
+      modMarkup.EditVariable
+      
+    'Edit variable button:
+    ''''''''''''''''''''''
+    Case "Grp1Btn2"
+      modMarkup.ResetDocumentVariables
+      
+    'Manage saved variables button:
+    '''''''''''''''''''''''''''''''
+    Case "Grp1Btn3"
+      modMarkup.ShowSavedVariables
+      
+    'Save variable button:
+    ''''''''''''''''''''''
+    Case "Grp1Btn4"
+      modMarkup.SaveUserVariable
+      
+    'Remove buttons (Split button 1):
+    '''''''''''''''''''''''''''''''''
+    Case "Grp1SB1Menu1Btn1"
+      modMarkup.RemoveVariable ("Selected")
+      
+    Case "Grp1SB1Menu1Btn2"
+      modMarkup.RemoveVariable ("SameTitle")
+      
+    Case "Grp1SB1Menu1Btn3"
+      modMarkup.RemoveVariable ("All")
+      
+    '------------------------------------------------
+    'GROUP 2
+    '------------------------------------------------
+
+    'Gather buttons (Menu 1):
+    '''''''''''''''''''''''''
+    Case "Grp2Menu1Btn1"
+      modGather.GatherFromAllOpenDocuments
+      
+    Case "Grp2Menu1Btn2"
+      modGather.GatherFromFolder
+      
+    Case "Grp2Menu1Btn3"
+      modGather.GatherFromDocument
+      
+    '------------------------------------------------
+    'GROUP 3
+    '------------------------------------------------
+
+    'Library button:
+    '''''''''''''''''''''''''
+    Case "Grp3Btn1"
+      
+      ShowLibrary
+      
+    '------------------------------------------------
+    'GROUP 4
+    '------------------------------------------------
+
+    'Help/About:
+    '''''''''''''''''''''''''
+    Case "Grp4Btn1"
+      HelpAbout
+      
+    '------------------------------------------------
+    Case Else
+      'Do Nothing
+  End Select
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'Callback for Toggle onAction
+Sub ToggleOnAction(Control As IRibbonControl, pressed As Boolean)
+  
+  'Any unhandled errors will destroy Application & Document level events.
+  If p_oAppEvents.oApp Is Nothing Then Set p_oAppEvents.oApp = Word.Application
+  If p_oDocEvents Is Nothing Then SetUpDocumentEvents
+  
+  Select Case Control.ID
+    Case Is = "Grp1TB1"
+      If p_bHighlight Then
+        p_bHighlight = False
+      Else
+        p_bHighlight = True
+      End If
+      HighlightVariables
+    Case Else
+      'Do nothing
+  End Select
+  
+  'Force the ribbon to redefine the control with correct image and label.
+  If myRibbon Is Nothing Then Set myRibbon = GetRibbon
+  myRibbon.InvalidateControl Control.ID
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'Callback for Toggle getPressed
+Sub ToggleGetPressed(Control As IRibbonControl, ByRef toggleState)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'toggleState (i.e., true or false) determines how the toggle
+'control appears on the ribbon (i.e., flush or sunken).
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Select Case Control.ID
+    Case Is = "Grp1TB1"
+      If Not p_bHighlight Then
+        toggleState = False
+      Else
+        toggleState = True
+      End If
+    Case Else
+      'Do nothing
+  End Select
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'Callback for Toggle getLabel
+Sub getLabel(Control As IRibbonControl, ByRef ReturnedVal)
+  Select Case Control.ID
+    Case Is = "Grp1TB1"
+      If Not p_bHighlight Then
+        ReturnedVal = "Highlight variables"
+      Else
+        ReturnedVal = "Remove highlight"
+      End If
+    Case Else
+      'Do nothing
+  End Select
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'Callback for Toggle getImage
+Sub getImage(Control As IRibbonControl, ByRef ReturnedVal)
+  Select Case Control.ID
+    Case Is = "Grp1TB1"
+      If p_bHighlight Then
+        ReturnedVal = "AppointmentColor0" 'The idMso of a built-in control
+      Else
+        ReturnedVal = "AppointmentColor1" 'The idMso of a built-in control
+      End If
+    Case Else
+      'Do nothing
+  End Select
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'Callback for CheckBox onAction
+Sub CheckBoxOnAction(Control As IRibbonControl, pressed As Boolean)
+  
+  'Any unhandled errors will destroy Application & Document level events.
+  If p_oAppEvents.oApp Is Nothing Then Set p_oAppEvents.oApp = Word.Application
+  If p_oDocEvents Is Nothing Then SetUpDocumentEvents
+  
+  Select Case Control.ID
+    Case Is = "Grp1Chk1"
+      p_bRemoveTextWithVariable = pressed
+    Case Else
+      'Do nothing
+  End Select
+  
+  'Force the ribbon to redefine the control with correct image and label.
+  If myRibbon Is Nothing Then Set myRibbon = GetRibbon
+  myRibbon.InvalidateControl Control.ID
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub ShowLibrary()
+Dim uf As ufLibrary
+  GrabTemplate
+  Set uf = New ufLibrary
+  uf.Show vbModeless
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub AddReference()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Procedure to add a reference to inkEdit control if it doesn't already exist.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim strGUID As String
+Dim i As Long
+Dim vRef As Variant
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'The following references were present on my machine during development:
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  
+'  {000204EF-0000-0000-C000-000000000046}                   {00020905-0000-0000-C000-000000000046}
+'  VBA                                                      Word
+'  Visual Basic For Applications                            Microsoft Word 15.0 Object Library
+'  C:\PROGRA~2\COMMON~1\MICROS~1\VBA\VBA7.1\VBE7.DLL        C:\Program Files (x86)\Microsoft Office\Office15\MSWORD.OLB
+'  Built in: True                                           Built in: True
+'  Major: 4                                                 Major: 8
+'  Minor: 2                                                 Minor: 6
+'
+'  {00020430-0000-0000-C000-000000000046}                   {2DF8D04C-5BFA-101B-BDE5-00AA0044DE52}
+'  stdole                                                   Office
+'  OLE Automation                                           Microsoft Office 15.0 Object Library
+'  C:\Windows\SysWOW64\stdole2.tlb                          C:\Program Files (x86)\Common Files\Microsoft Shared\OFFICE15\MSO.DLL
+'  Built in: False                                          Built in: False
+'  Major: 2                                                 Major: 2
+'  Minor: 0                                                 Minor: 7
+'
+'  {0D452EE1-E08F-101A-852E-02608C4D0BB4}                   {8405D0DF-9FDD-4829-AEAD-8E2B0A18FEA4}
+'  MSForms                                                  INKEDLib
+'  Microsoft Forms 2.0 Object Library                       Microsoft InkEdit Control 1.0
+'  C:\Windows\SysWOW64\FM20.DLL                             C:\Windows\SysWOW64\Inked.dll
+'  Built in: False                                          Built in: False
+'  Major: 2                                                 Major: 1
+'  Minor: 0                                                 Minor: 0
+
+  ''''''''''''''''''''''''''''''''''''''''
+  'GUID of the inkEdit control (INKEDLib).
+  ''''''''''''''''''''''''''''''''''''''''
+  strGUID = "{8405D0DF-9FDD-4829-AEAD-8E2B0A18FEA4}"
+  
+  On Error Resume Next
+  
+  ''''''''''''''''''''''''''''''''
+  'Remove any missing references.
+  ''''''''''''''''''''''''''''''''
+  For i = ThisDocument.VBProject.References.Count To 1 Step -1
+    Set vRef = ThisDocument.VBProject.References.Item(i)
+    If vRef.isbroken = True Then
+      ThisDocument.VBProject.References.Remove vRef
+    End If
+  Next i
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Clear any errors so that error trapping for GUID additions can be evaluated.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Err.Clear
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Add the reference. When the following line is executed during break mode
+  'it throws an error "Can't enter break mode at this time.". If the proc
+  'is executed normally then no error seems to occur.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  ThisDocument.VBProject.References.AddFromGuid _
+  Guid:=strGUID, Major:=1, Minor:=0
+  
+  Select Case Err.Number
+  
+    Case Is = 32813
+      '''''''''''''''''''''''''''''''''''''''''''''''
+      'Reference already in use. No action necessary.
+      '''''''''''''''''''''''''''''''''''''''''''''''
+    Case Is = vbNullString
+      '''''''''''''''''''''''''''''''''''''''''''''''
+      'Reference added without issue.
+      '''''''''''''''''''''''''''''''''''''''''''''''
+    Case Else
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''
+      'An unknown error was encountered, so alert the user.
+      '''''''''''''''''''''''''''''''''''''''''''''''''''''
+      MsgBox "A problem was encountered trying to add or remove a reference in this file." & vbNewLine & _
+             "Please check the references in your VBA project.", vbCritical + vbOKOnly, "Reference Error"
+    
+  End Select
+  
+  On Error GoTo 0
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Sub HelpAbout()
+Dim str As String
+  str = "This software was developed by Docu-mate Ltd. All rights reserved." & vbCr & vbCr & _
+        "For more information or support, contact:" & vbCr & _
+        "support@docu-mate.com" & vbCr & _
+        "07468 310 256" & vbCr & vbCr & _
+        "Word folders:" & vbCr & vbCr & _
+        "User templates:  " & Options.DefaultFilePath(wdUserTemplatesPath) & vbCr & vbCr & _
+        "Startup folder:  " & Options.DefaultFilePath(wdStartupPath)
+  MsgBox str, vbOKOnly + vbInformation, "About"
+lbl_Exit:
+  Exit Sub
+End Sub
+
+
+
+
+
+
+
+
+

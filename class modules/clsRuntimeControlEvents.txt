@@ -1,0 +1,238 @@
+VERSION 1.0 CLASS
+BEGIN
+  MultiUse = -1  'True
+END
+Attribute VB_Name = "clsRuntimeControlEvents"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
+Option Explicit
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' clsRuntimeControlEvents
+' By J F Pollock, josephfpollock@gmail.com
+'
+' This class module is used to establish control events for all the controls
+' which have been added to ufGatheredVariables at runtime.
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Public WithEvents oTextBox As MSForms.TextBox
+Attribute oTextBox.VB_VarHelpID = -1
+Public WithEvents oComboBox As MSForms.ComboBox
+Attribute oComboBox.VB_VarHelpID = -1
+Public WithEvents oCommandButton As MSForms.CommandButton
+Attribute oCommandButton.VB_VarHelpID = -1
+
+Private Sub oTextBox_KeyUp(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+Dim oCtrl As MSForms.Control
+Dim strID As String
+  With p_ufGather.txtInfo
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Determine if a description exists for the user variable represented by
+    'the selected control. The .Tag property of the control will be the
+    'item key of the description in the collection if it exists.
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    If Exists(p_colVariableDescriptions, oTextBox.Tag) Then
+      .Value = p_colVariableDescriptions(oTextBox.Tag)
+    Else
+      .Value = ""
+    End If
+  End With
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If the textbox is associated with a Library Entry variable
+  'then make the related commandbutton the default.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oCtrl = oTextBox
+  If Left(oCtrl.Name, 5) = "txtLE" Then
+    '''''''''''''''''''''''''
+    'Extract the control ID.
+    '''''''''''''''''''''''''
+    strID = Split(oCtrl.Name, "_")(1)
+    '''''''''''''''''''''''''''''''''
+    'Make command button the default.
+    '''''''''''''''''''''''''''''''''
+    p_ufGather.Controls("cmdLE_" & strID).Default = True
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub oTextBox_MouseUp(ByVal Button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+Dim oCtrl As MSForms.Control
+Dim strID As String
+  With p_ufGather.txtInfo
+    If Exists(p_colVariableDescriptions, oTextBox.Tag) Then
+      .Value = p_colVariableDescriptions(oTextBox.Tag)
+    Else
+      .Value = ""
+    End If
+  End With
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If the textbox is associated with a Library Entry variable
+  'then make the related commandbutton the default.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oCtrl = oTextBox
+  If Left(oCtrl.Name, 5) = "txtLE" Then
+    '''''''''''''''''''''''''
+    'Extract the control ID.
+    '''''''''''''''''''''''''
+    strID = Split(oCtrl.Name, "_")(1)
+    '''''''''''''''''''''''''''''''''
+    'Make command button the default.
+    '''''''''''''''''''''''''''''''''
+    p_ufGather.Controls("cmdLE_" & strID).Default = True
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub oComboBox_KeyUp(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+  With p_ufGather.txtInfo
+    If Exists(p_colVariableDescriptions, oComboBox.Tag) Then
+      .Value = p_colVariableDescriptions(oComboBox.Tag)
+    Else
+      .Value = ""
+    End If
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub oComboBox_MouseUp(ByVal Button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+  With p_ufGather.txtInfo
+    If Exists(p_colVariableDescriptions, oComboBox.Tag) Then
+      .Value = p_colVariableDescriptions(oComboBox.Tag)
+    Else
+      .Value = ""
+    End If
+  End With
+lbl_Exit:
+  Exit Sub
+End Sub
+
+'Runtime command button used to view Library in ufGatherdVariables.
+Private Sub oCommandButton_Click()
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Event procedure for commandbutton controls which have been dynamically added to ufGatheredVariables.
+'The purpose of this procedure is to display the user library (hidden in the last page of the multipage)
+'when any command button associated with a Library Entry is clicked.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim oCtrl As MSForms.Control
+Dim oPage As MSForms.Page
+
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'CommandButtons on the multipage are only associated with Library Entry textboxes. The purpose of the
+  'commandbutton is to display the hidden user library and allow an item to be selected. The title of the
+  'selected item is then written back into the originating LE textbox. Each commandbutton and associated LE
+  'textbox will share the same unique control ID. This ID allows us to write the chosen library item title back
+  'into the correct textbox.
+  
+  'The ID is created by a combination of the page index that the control is located on in the multipage and the position
+  'in the arrCCData array which is looped through in ufGatheredVariables.Userform_Activate while gathering
+  'the CC data. The ControlID is stored in the control's .Tag property. An example of control ID's:
+  
+  'Label.tag (lbl_07), textbox.tag (txtLE_07), commandbutton.tag (cmdLE_07)
+  
+  'The ControID '07' would represent the 1st page (0) and the 6th CC user variable (7) in the loop while gathering.
+  'Remember that the first element in arrCCData contains the name of the document and the page index is zero-based.
+  'The purpose of this unique ID is being able to re-select the required textbox control after the user is finished with
+  'the Library, either by cancelling or confirming the selection.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  Set oCtrl = oCommandButton
+  With oCtrl
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    'Save the controlID as a property of p_ufGather.
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    p_ufGather.ControlID = Split(.Name, "_")(1)
+  End With
+  
+  With p_ufGather
+  
+    If Exists(p_colVariableDescriptions, oCommandButton.Tag) Then
+      .txtInfo.Value = p_colVariableDescriptions(oCommandButton.Tag)
+    Else
+      .txtInfo.Value = ""
+    End If
+    
+    With .MultiPage1
+     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+     'If there is a description for the current Library Entry variable in
+     'txtInfo then store it so that it can be re-instated when the user is
+     'finished with the Library. We can store the description in the .Tag
+     'property of the MultiPage control so that it can be easily restored
+     'when the Library is hidden.
+     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+     .Tag = p_ufGather.txtInfo.Value
+     ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+     'Store the current page value in the .Tag property of the Library page
+     'so that the originating page can be restored when the Lib is hidden.
+     ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+     .Pages("EDUserLibrary").Tag = .Value
+     ''''''''''''''''''''''''''''''''''''''
+     'Show the page containing the Library.
+     ''''''''''''''''''''''''''''''''''''''
+     .Pages("EDUserLibrary").Visible = True
+     .Pages("EDUserLibrary").Enabled = True
+     '''''''''''''''''
+     'Select the page.
+     '''''''''''''''''
+     p_ufGather.MultiPage1.Value = .Pages("EDUserLibrary").Index
+     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+     'Set the focus on the Library listbox which allows instant navigation
+     'using arrow keys without having to first click into the listbox.
+     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+     .Pages("EDUserLibrary").Controls("fraTreeControl").SetFocus
+   End With
+    
+   '''''''''''''''''''''
+   'Display info message.
+   '''''''''''''''''''''
+   .txtInfo.Value = "Choose an item from the Library then click 'Select' to confirm, " & _
+                    "or 'Cancel' to go back."
+                                 
+  End With
+  
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Disable all non-essential controls while the Library is displayed.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  With p_ufGather
+    .chkNoEmptyVariables.Enabled = False
+    .cmdClearVariables.Enabled = False
+    .cmdPreviousPage.Enabled = False
+    .cmdNextPage.Enabled = False
+    .cmdPopulate.Enabled = False
+  End With
+  
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'Disable all pages in the MultiPage exept the Library page.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  For Each oPage In p_ufGather.MultiPage1.Pages
+    If oPage.Name <> "EDUserLibrary" Then oPage.Enabled = False
+  Next oPage
+  
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Function Exists(coll As Collection, Key As String) As Boolean
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'Function to determine if an item defined by 'key' exists
+'in the collection. True if it does, False if not.
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  On Error GoTo lbl_Exit
+  coll.Item Key
+  Exists = True
+lbl_Exit:
+  Exit Function
+End Function
+
+
+
+
+
+
+
+
+
+
+

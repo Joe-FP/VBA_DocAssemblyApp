@@ -1,0 +1,115 @@
+VERSION 1.0 CLASS
+BEGIN
+  MultiUse = -1  'True
+END
+Attribute VB_Name = "clsDocEvents"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
+Option Explicit
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' clsDocumentEvents
+' By J F Pollock, josephfpollock@gmail.com
+'
+' This class module is used to establish Content Control events for all documents used with the application.
+'
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Public WithEvents oDoc As Word.Document
+Attribute oDoc.VB_VarHelpID = -1
+
+Private Sub oDoc_ContentControlAfterAdd(ByVal NewContentControl As ContentControl, ByVal InUndoRedo As Boolean)
+  
+  If p_bSkipDocEvents = True Then Exit Sub
+  If InUndoRedo = True Then Exit Sub
+  
+  p_bCCSelected = True
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If we try to copy & paste a CC with its .LockContentControl = True then the
+  'value of this property will not migrate to the new CC. In other words, if a
+  'CC which is set to "Content Control cannot be deleted" is copied & pasted
+  'then the new CC won't inherit this particular property. For the purposes of
+  'this application, it is possible for an existing variable to be copied & pasted.
+
+  'With a copy & paste action p_bAppInsert = False, so we must make an additional
+  'test of the .Tag property to confirm it's an appCC.
+  '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If Not p_bAppInsert Then
+    If NewContentControl.Tag = "ccApp" Then
+      '''''''''''''''''''''''''''''''
+      'Copy & pasted appCC - lock it.
+      '''''''''''''''''''''''''''''''
+      With NewContentControl
+        .LockContents = True
+        .LockContentControl = True
+      End With
+    End If
+    Exit Sub
+  End If
+  ''''''''''''''''''''''''''''''''''''''''''
+  'CC is application added, do the following:
+  ''''''''''''''''''''''''''''''''''''''''''
+  With NewContentControl
+    'Unlock CC.
+    .LockContentControl = False
+    .LockContents = False
+    'Ensure correct tag.
+    .Tag = "ccApp"
+    'Apply correct shading.
+    With NewContentControl.Range.Font.Shading
+    If p_bHighlight Then
+      Select Case NewContentControl.Type
+        Case 1
+          .BackgroundPatternColor = p_clngSTColor
+        Case 3
+          .BackgroundPatternColor = p_clngDDColor
+        Case 0
+          .BackgroundPatternColor = p_clngLEColor
+      End Select
+    Else
+      .BackgroundPatternColor = -16777216
+    End If
+    End With
+    'Lock CC.
+    .LockContentControl = True
+    .LockContents = True
+  End With
+  'Ensure p_appCC points to newly added CC.
+  Set p_appCC = NewContentControl
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub oDoc_ContentControlOnEnter(ByVal ContentControl As ContentControl)
+  If p_bSkipDocEvents = True Then Exit Sub
+  p_bCCSelected = True
+  If ContentControl.Tag = "ccApp" Then
+    Set p_appCC = ContentControl
+    If myRibbon Is Nothing Then Set myRibbon = GetRibbon
+    myRibbon.ActivateTab "custTab1"
+  End If
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub oDoc_ContentControlOnExit(ByVal ContentControl As ContentControl, Cancel As Boolean)
+  If p_bSkipDocEvents = True Then Exit Sub
+  If ContentControl.Tag <> "ccApp" Then p_bCCSelected = False: Exit Sub
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  'If Exit event is triggered by selecting the CC selector tab then don't exit.
+  ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+  If Selection.Range = ContentControl.Range Then Cancel = True: Exit Sub
+  Set p_appCC = Nothing
+  p_bCCSelected = False
+lbl_Exit:
+  Exit Sub
+End Sub
+
+Private Sub oDoc_ContentControlBeforeDelete(ByVal OldContentControl As ContentControl, ByVal InUndoRedo As Boolean)
+  If p_bSkipDocEvents = True Then Exit Sub
+  If OldContentControl.Tag = "ccApp" Then Set p_appCC = Nothing
+  p_bCCSelected = False
+lbl_Exit:
+  Exit Sub
+End Sub
+
