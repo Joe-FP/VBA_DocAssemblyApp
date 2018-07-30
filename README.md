@@ -1,16 +1,15 @@
 # VBA_DocAssemblyApp
 
-An extensive attempt at creating a desktop document assembly application for Microsoft Word. All source files included. 
-Word add-in applications are loaded as macro-enabled global templates (.dotm) into Word's Startup directory.
+An extensive attempt at creating a desktop document assembly application for Microsoft Word. This application was designed to simplify the assembly & production of a group of related documents, such as engineering
+work packages.
+
+All source files included. Word add-in applications are loaded as macro-enabled global templates (.dotm) into Word's Startup directory.
 
 Created by Joseph F. Pollock, josephfpollock@gmail.com
 For app demo, see: www.docu-mate.com/demo
 
 
 App summary:
-
-This application was designed to simplify the assembly & production of a group of related documents, such as engineering
-work packages.
 
 Firstly, documents are marked up using variables, which act as placeholders for document content. Ideally, the marked-up 
 documents will now function as templates, in order to be reused. Next, we select the required documents for a new document 
