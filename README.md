@@ -7,12 +7,14 @@ For app demo, see: www.docu-mate.com/demo
 
 **FOR EMPLOYERS, SEE:**
 
-- standard modules/modGather.txt -- line 820 -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant 
+1. standard modules/modGather.txt -- line 820 -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant**
 
+*Description*
 This function accepts a document object, and returns a sorted variant array containing all variable data which has been gathered from the document. The challenge here was creating a bespoke sort procedure for the array. Variable data should be returned in order of occurence, but header & footer variables should preceed all others.
 
-- standard modules/modGather.txt -- line 158 -- Public Function fcnInterferringOrAdjactentCC(Optional ByVal lngCCType As Long = 1) As Boolean
+2. standard modules/modGather.txt -- line 158 -- Public Function fcnInterferringOrAdjactentCC(Optional ByVal lngCCType As Long = 1) As Boolean
 
+*Description*
 This function was a collaberation between myself and Microsoft Word MVP Gregory K. Maxey. Essentially, it stops document variables from being added inside, or directly next to other existing variables. Interferring variables cause a multitude of issues, and finding a reliable method of detecting interferring variables proved much more challenging that initially thought.
 
 **App summary:**
