@@ -5,17 +5,17 @@ An extensive attempt at creating a desktop document assembly application for Mic
 Created by Joseph Pollock, josephfpollock@gmail.com
 For app demo, see: www.docu-mate.com/demo
 
-# FOR EMPLOYERS, SEE:
+## FOR EMPLOYERS, SEE:
 
-1. standard modules/modGather.txt -- line 820 -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant 
+- standard modules/modGather.txt -- line 820 -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant 
 
 This function accepts a document object, and returns a sorted variant array containing all variable data which has been gathered from the document. The challenge here was creating a bespoke sort procedure for the array. Variable data should be returned in order of occurence, but header & footer variables should preceed all others.
 
-2. standard modules/modGather.txt -- line 158 -- Public Function fcnInterferringOrAdjactentCC(Optional ByVal lngCCType As Long = 1) As Boolean
+- standard modules/modGather.txt -- line 158 -- Public Function fcnInterferringOrAdjactentCC(Optional ByVal lngCCType As Long = 1) As Boolean
 
 This function was a collaberation between myself and Microsoft Word MVP Gregory K. Maxey. Essentially, it stops document variables from being added inside, or directly next to other existing variables. Interferring variables cause a multitude of issues, and finding a reliable method of detecting interferring variables proved much more challenging that initially thought.
 
-# App summary:
+## App summary:
 
 Firstly, documents are marked up using variables, which act as placeholders for document content. Ideally, the marked-up 
 documents will now function as templates, in order to be reused. Next, we select the required documents for a new document 
