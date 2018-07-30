@@ -7,6 +7,14 @@ All source files included. Word add-in applications are loaded as macro-enabled 
 Created by Joseph F. Pollock, josephfpollock@gmail.com
 For app demo, see: www.docu-mate.com/demo
 
+FOR EMPLOYERS, SEE:
+
+1. standard modules/modGather.txt -- line 820 -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant 
+
+This function accepts a document object, and returns a sorted variant array containing all variable data which has been gathered from the document. The challenge here was creating a bespoke sort procedure for the array. Variable data should be returned in order of occurence, but header & footer variables should preceed all others.
+
+2.
+
 
 App summary:
 
@@ -29,9 +37,5 @@ class modules       - Global application event handlers, document event handlers
 form modules        - All userform source code for 7-no. userforms.
 
 
-Highlights:
 
-standard modules/modGather.txt -- line 820 -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant 
-
-This function accepts a document object, and returns a sorted variant array containing all variable data which has been gathered from the document. The challenge here was creating a bespoke sort procedure for the array. Variable data should be returned in order of occurence, but header & footer variables should preceed all others.
   
