@@ -1,4 +1,4 @@
-## VBA_DocAssemblyApp
+## VBA Document Assembly Application
 
 An extensive attempt at creating a desktop document assembly application for Microsoft Word, using Visual Basic for Applications (VBA). This application was designed to simplify the assembly & production process of a group of related documents, such as engineering work packages. All source files included. Word add-in applications are loaded as macro-enabled global templates (.dotm) into Word's Startup directory.
 
