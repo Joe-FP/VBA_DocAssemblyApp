@@ -9,12 +9,12 @@ For app demo, see: www.docu-mate.com/demo
 
 1. standard modules/modGather.txt -- line 820 -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant**
 
-*Description*
+*Description: *
 This function accepts a document object, and returns a sorted variant array containing all variable data which has been gathered from the document. The challenge here was creating a bespoke sort procedure for the array. Variable data should be returned in order of occurence, but header & footer variables should preceed all others.
 
 2. standard modules/modGather.txt -- line 158 -- Public Function fcnInterferringOrAdjactentCC(Optional ByVal lngCCType As Long = 1) As Boolean
 
-*Description*
+*Description: *
 This function was a collaberation between myself and Microsoft Word MVP Gregory K. Maxey. Essentially, it stops document variables from being added inside, or directly next to other existing variables. Interferring variables cause a multitude of issues, and finding a reliable method of detecting interferring variables proved much more challenging that initially thought.
 
 **App summary:**
@@ -28,13 +28,13 @@ progressively more efficient.
 
 **Folder structure:**
 
-- standard modules    - Variable gathering, markup, and Ribbon control. General support, and array support (by Chip Pearson).
+- **standard modules**    - Variable gathering, markup, and Ribbon control. General support, and array support (by Chip Pearson).
                       Public variables, constants, and API declarations. Debugging support.
 
-- class modules       - Global application event handlers, document event handlers, node and treeview code (by 
+- **class modules**       - Global application event handlers, document event handlers, node and treeview code (by 
                       JKP Application Development Services (c)), dynamic runtime control event handlers.
                       
-- form modules        - All userform source code for 7-no. userforms.
+- **form modules**        - All userform source code for 7-no. userforms.
 
 
 
