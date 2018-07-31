@@ -13,6 +13,9 @@ This function accepts a document object, and returns a sorted variant array cont
 [Here -- line 158:](standard_modules/modSupport.txt)
 This function was a collaberation between myself and former Microsoft Word MVP Gregory K. Maxey (https://gregmaxey.com/). Essentially, it stops document variables from being added inside, or directly next to other existing variables. Interferring variables cause a multitude of issues, and finding a reliable method of detecting interferring variables proved much more challenging that initially thought.
 
+[Here -- line 124:](standard_modules/modRibbonControl.txt)
+The application has a feature to save commonly used variables, which are then made available in the Word Ribbon menu - this is a dynamic feature. This callback procedure is used to dynamically create the XML required to display the currently saved variables on the Ribbon.
+
 ### **App summary:**
 
 Firstly, documents are marked up using variables, which act as placeholders for document content. Ideally, the marked-up 
