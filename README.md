@@ -24,12 +24,8 @@ progressively more efficient.
 
 ### **Folder structure:**
 
-- **standard_modules**    - Variable gathering, markup, and Ribbon control. General support, and array support (by Chip Pearson).
-                      Public variables, constants, and API declarations. Debugging support.
-
-- **class_modules**       - Global application event handlers, document event handlers, node and treeview code (by 
-                      JKP Application Development Services (c)), dynamic runtime control event handlers.
-                      
+- **standard_modules**    - Variable gathering, markup, and Ribbon control. General support, and array support (by Chip Pearson). Public variables, constants, and API declarations. Debugging support.
+- **class_modules**       - Global application event handlers, document event handlers, node and treeview code (by JKP Application Development Services (c)), dynamic runtime control event handlers.
 - **form_modules**        - All userform source code for 7-no. userforms.
 
 
