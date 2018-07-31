@@ -7,8 +7,8 @@ For app demo, see: www.docu-mate.com/demo
 
  ### **For employers, see:**
 
-**_standard modules/modGather.txt -- line 820 -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant_**
-This function accepts a document object, and returns a sorted variant array containing all variable data which has been gathered from the document. The challenge here was creating a bespoke sort procedure for the array. Variable data should be returned in order of occurence, but header & footer variables should preceed all others. [sdffedf](standard_modules/modGather.txt)
+[standard modules/modGather.txt -- line 820](standard_modules/modGather.txt) -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant_**
+This function accepts a document object, and returns a sorted variant array containing all variable data which has been gathered from the document. The challenge here was creating a bespoke sort procedure for the array. Variable data should be returned in order of occurence, but header & footer variables should preceed all others.
 
 **_standard modules/modGather.txt -- line 158 -- Public Function fcnInterferringOrAdjactentCC(Optional ByVal lngCCType As Long = 1) As Boolean_**
 
