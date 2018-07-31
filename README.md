@@ -5,7 +5,7 @@ An extensive attempt at creating a desktop document assembly application for Mic
 Created by Joseph Pollock, josephfpollock@gmail.com
 For app demo, see: www.docu-mate.com/demo
 
-###For employers, see:
+### **For employers, see:**
 
 **standard modules/modGather.txt -- line 820 -- Private Function fcnGatherFrom(ByRef oDoc As Word.Document) As Variant**
 
